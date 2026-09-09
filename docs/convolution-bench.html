@@ -1,0 +1,650 @@
+<title>Convolution Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+:root{
+  --paper:#e9edf0;
+  --surface:#ffffff;
+  --surface-2:#f2f5f7;
+  --ink:#131b22;
+  --ink-2:#44545f;
+  --ink-3:#72848f;
+  --line:#cdd7dd;
+  --line-strong:#a6b4be;
+  --accent:#a8540b;
+  --accent-soft:#f7e6d5;
+  --pos:#b4400c;
+  --neg:#0b6b83;
+  --focus:#1d4ed8;
+  --shadow:0 1px 2px rgba(19,27,34,.08), 0 8px 24px -12px rgba(19,27,34,.25);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0d1319;
+    --surface:#161e26;
+    --surface-2:#1b252f;
+    --ink:#e7eef3;
+    --ink-2:#a6b7c3;
+    --ink-3:#778995;
+    --line:#293641;
+    --line-strong:#3d4d5a;
+    --accent:#f0a44f;
+    --accent-soft:#3a2916;
+    --pos:#fb8c3c;
+    --neg:#38cfe8;
+    --focus:#60a5fa;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0d1319;
+  --surface:#161e26;
+  --surface-2:#1b252f;
+  --ink:#e7eef3;
+  --ink-2:#a6b7c3;
+  --ink-3:#778995;
+  --line:#293641;
+  --line-strong:#3d4d5a;
+  --accent:#f0a44f;
+  --accent-soft:#3a2916;
+  --pos:#fb8c3c;
+  --neg:#38cfe8;
+  --focus:#60a5fa;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  font-size:15px;
+  line-height:1.6;
+}
+.wrap{max-width:1020px;margin:0 auto;padding:40px 24px 96px;display:flex;flex-direction:column;gap:40px}
+
+h1,h2,h3{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",sans-serif;text-wrap:balance;margin:0}
+h1{font-size:clamp(30px,5vw,44px);font-weight:700;letter-spacing:-.015em;line-height:1.1}
+h2{font-size:23px;font-weight:700;letter-spacing:-.01em}
+h3{font-size:15px;font-weight:600}
+p{margin:0;max-width:66ch}
+.lede{font-size:17px;color:var(--ink-2);max-width:62ch}
+
+.eyebrow{
+  font-family:"IBM Plex Mono",monospace;font-size:11px;font-weight:600;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--accent);
+}
+.mono{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+
+/* ---- header ---- */
+header{display:flex;flex-direction:column;gap:14px;border-bottom:2px solid var(--ink);padding-bottom:24px}
+
+/* ---- bench: the instrument panel ---- */
+.bench{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:3px;
+  box-shadow:var(--shadow);
+  overflow:hidden;
+}
+.bench-head{
+  display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  padding:14px 20px;border-bottom:1px solid var(--line);background:var(--surface-2);
+}
+.bench-body{padding:22px 20px;display:flex;flex-direction:column;gap:22px}
+
+section{display:flex;flex-direction:column;gap:16px}
+
+/* ---- pixel grids ---- */
+.stage{display:flex;flex-wrap:wrap;align-items:flex-start;gap:22px}
+.panel{display:flex;flex-direction:column;gap:8px}
+.panel-label{
+  font-family:"IBM Plex Mono",monospace;font-size:10.5px;font-weight:600;
+  letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);
+}
+.op{
+  align-self:center;font-family:"IBM Plex Mono",monospace;font-size:22px;
+  color:var(--ink-3);padding-top:18px;
+}
+
+.grid{display:grid;gap:2px;background:var(--line-strong);padding:2px;border-radius:2px;width:max-content}
+.cell{
+  width:34px;height:34px;display:flex;align-items:center;justify-content:center;
+  font-family:"IBM Plex Mono",monospace;font-size:13px;font-weight:500;
+  position:relative;
+}
+.cell.sm{width:27px;height:27px;font-size:11.5px}
+.cell.win{outline:3px solid var(--accent);outline-offset:-3px;z-index:2}
+.cell.cur{outline:3px solid var(--focus);outline-offset:-3px;z-index:3}
+.grid.click .cell{cursor:pointer}
+.grid.click .cell:hover{filter:brightness(1.18)}
+
+.kernel .cell{background:var(--accent-soft);color:var(--accent);font-weight:600;border:1px solid transparent}
+.kernel{background:var(--accent);padding:2px}
+
+/* ---- 1D strip ---- */
+.strip{display:flex;gap:3px;flex-wrap:wrap}
+.strip .cell{border-radius:2px}
+
+/* ---- math readout ---- */
+.readout{
+  background:var(--surface-2);border:1px solid var(--line);border-radius:2px;
+  padding:14px 16px;font-family:"IBM Plex Mono",monospace;font-size:13px;
+  overflow-x:auto;color:var(--ink-2);
+}
+.readout .tot{color:var(--ink);font-weight:600;font-size:15px}
+.readout b{color:var(--accent);font-weight:600}
+
+/* ---- controls ---- */
+.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button{
+  font-family:"IBM Plex Sans",sans-serif;font-size:13px;font-weight:500;
+  padding:7px 14px;border-radius:2px;border:1px solid var(--line-strong);
+  background:var(--surface);color:var(--ink);cursor:pointer;
+  transition:background .12s,border-color .12s;
+}
+button:hover{background:var(--surface-2);border-color:var(--ink-3)}
+button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+button.primary{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+button.primary:hover{background:var(--ink-2);border-color:var(--ink-2)}
+button[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+
+/* ---- notes ---- */
+.note{
+  border-left:3px solid var(--accent);padding:2px 0 2px 14px;
+  color:var(--ink-2);font-size:14.5px;max-width:64ch;
+}
+.tag{
+  display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:11px;
+  padding:2px 7px;border:1px solid var(--line-strong);border-radius:2px;
+  color:var(--ink-2);background:var(--surface-2);
+}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-3);font-family:"IBM Plex Mono",monospace}
+.sw{display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:-1px;margin-right:5px;border:1px solid var(--line-strong)}
+
+.compare{display:flex;gap:26px;flex-wrap:wrap}
+.compare .panel-label{color:var(--ink-2);font-size:11.5px}
+
+footer{border-top:1px solid var(--line);padding-top:20px;color:var(--ink-3);font-size:13.5px}
+code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--surface-2);
+  padding:1px 5px;border-radius:2px;border:1px solid var(--line)}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media (max-width:640px){
+  .cell{width:29px;height:29px;font-size:12px}
+  .cell.sm{width:24px;height:24px;font-size:11px}
+  .op{display:none}
+}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Drowsy Driver Detection &middot; how the model sees</div>
+  <h1>Convolution Bench</h1>
+  <p class="lede">A kernel is not a mysterious thing. It is a handful of numbers you slide across
+  a picture, multiplying and adding. Step through it below and watch the arithmetic happen.</p>
+</header>
+
+<!-- ============ STAGE 1: 1D ============ -->
+<section>
+  <h2>1 &middot; Start with a single row</h2>
+  <p>Six numbers. Think of them as one thin strip of a photo &mdash; <strong>9 is bright, 1 is
+  dark</strong>. You can see the edge instantly. The computer cannot.</p>
+
+  <div class="bench">
+    <div class="bench-head">
+      <span class="panel-label">1-D strip &middot; kernel [+1, &minus;1]</span>
+      <span class="tag" id="d1-pos">position 1 of 5</span>
+    </div>
+    <div class="bench-body">
+      <div class="panel">
+        <span class="panel-label">Input strip</span>
+        <div class="strip" id="d1-strip"></div>
+      </div>
+
+      <div class="readout" id="d1-math"></div>
+
+      <div class="panel">
+        <span class="panel-label">Output &mdash; one number per position</span>
+        <div class="strip" id="d1-out"></div>
+      </div>
+
+      <div class="controls">
+        <button class="primary" id="d1-step">Step &rarr;</button>
+        <button id="d1-reset">Reset</button>
+      </div>
+
+      <p class="note">Flat stretches give <strong>0</strong>. The one place brightness
+      <em>changes</em> gives <strong>8</strong>. Those two numbers <code>[+1, &minus;1]</code>
+      just became an edge detector &mdash; that is all a kernel is.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ STAGE 2: 2D ============ -->
+<section>
+  <h2>2 &middot; A real picture is 2-D, so the kernel is a square</h2>
+  <p>A row only lets you compare left&harr;right. To also compare up&harr;down you need a square:
+  3 rows &times; 3 columns = <strong>9 numbers</strong>. Identical idea, one extra direction.</p>
+
+  <div class="bench">
+    <div class="bench-head">
+      <span class="panel-label">8&times;8 input &middot; 3&times;3 kernel &middot; 6&times;6 output</span>
+      <span class="tag" id="d2-pos"></span>
+    </div>
+    <div class="bench-body">
+
+      <div class="seg" role="group" aria-label="Choose a kernel">
+        <button data-k="hedge" aria-pressed="true">Horizontal edge</button>
+        <button data-k="vedge" aria-pressed="false">Vertical edge</button>
+        <button data-k="blur" aria-pressed="false">Blur</button>
+        <button data-k="sharp" aria-pressed="false">Sharpen</button>
+        <button data-k="rand" aria-pressed="false">Random (untrained)</button>
+      </div>
+
+      <div class="stage">
+        <div class="panel">
+          <span class="panel-label">Input &mdash; an open eye</span>
+          <div class="grid click" id="d2-in" style="grid-template-columns:repeat(8,auto)"></div>
+        </div>
+
+        <div class="op">&times;</div>
+
+        <div class="panel">
+          <span class="panel-label">Kernel &mdash; 9 numbers</span>
+          <div class="grid kernel" id="d2-k" style="grid-template-columns:repeat(3,auto)"></div>
+        </div>
+
+        <div class="op">=</div>
+
+        <div class="panel">
+          <span class="panel-label">Output &mdash; the feature map</span>
+          <div class="grid" id="d2-out" style="grid-template-columns:repeat(6,auto)"></div>
+          <div class="legend">
+            <span><i class="sw" style="background:var(--neg)"></i>negative</span>
+            <span><i class="sw" style="background:var(--surface-2)"></i>zero</span>
+            <span><i class="sw" style="background:var(--pos)"></i>positive</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="readout" id="d2-math"></div>
+
+      <div class="controls">
+        <button class="primary" id="d2-step">Step &rarr;</button>
+        <button id="d2-play">Auto-slide</button>
+        <button id="d2-reset">Reset</button>
+        <span class="tag">or click any input cell</span>
+      </div>
+
+      <p class="note" id="d2-note"></p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ STAGE 3: why it matters ============ -->
+<section>
+  <h2>3 &middot; Why this detects a closed eye</h2>
+  <p>Here is the same horizontal-edge kernel run over both eye states. Nothing changes but the
+  input. Look at how different the two output maps are &mdash; <strong>that difference is the
+  signal</strong> the network learns to read.</p>
+
+  <div class="bench">
+    <div class="bench-head">
+      <span class="panel-label">Same kernel, two inputs</span>
+      <span class="tag">horizontal edge detector</span>
+    </div>
+    <div class="bench-body">
+      <div class="compare">
+        <div class="panel">
+          <span class="panel-label">Open eye</span>
+          <div class="grid" id="c-open-in" style="grid-template-columns:repeat(8,auto)"></div>
+        </div>
+        <div class="panel">
+          <span class="panel-label">&rarr; its feature map</span>
+          <div class="grid" id="c-open-out" style="grid-template-columns:repeat(6,auto)"></div>
+        </div>
+        <div class="panel">
+          <span class="panel-label">Closed eye</span>
+          <div class="grid" id="c-shut-in" style="grid-template-columns:repeat(8,auto)"></div>
+        </div>
+        <div class="panel">
+          <span class="panel-label">&rarr; its feature map</span>
+          <div class="grid" id="c-shut-out" style="grid-template-columns:repeat(6,auto)"></div>
+        </div>
+      </div>
+
+      <p class="note">The open eye produces edges scattered around the iris and both lids. The
+      closed eye produces one thick unbroken band. A later layer only has to notice
+      <em>&ldquo;one band, not scattered rings&rdquo;</em> to call it shut.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ STAGE 4: the punchline ============ -->
+<section>
+  <h2>4 &middot; Nobody chooses the 9 numbers</h2>
+  <p>Every kernel above was written by hand so you could see what it does. In the real network
+  they start as <strong>random junk</strong> &mdash; press <em>Random (untrained)</em> above and
+  look at the mush it produces. That is exactly what our model output before training.</p>
+  <p>Training then nudges those 9 numbers, thousands of times, in whatever direction reduces the
+  error. They drift on their own into edge detectors, curve detectors, blob detectors &mdash;
+  because those happen to be useful. <strong>Nobody programmed &ldquo;look for an
+  eyelid.&rdquo;</strong></p>
+
+  <div class="bench">
+    <div class="bench-body">
+      <h3>The numbers in your actual model</h3>
+      <div class="readout" style="color:var(--ink-2)">
+        layer 1 &nbsp; <b>32 kernels</b> &times; 9 numbers &nbsp;=&nbsp; 288 knobs &nbsp;&nbsp;&rarr;&nbsp; edges, gradients<br>
+        layer 2 &nbsp; <b>64 kernels</b> &nbsp;&rarr;&nbsp; corners, curves, blobs<br>
+        layer 3 &nbsp; <b>128 kernels</b> &nbsp;&rarr;&nbsp; eyelid shapes, iris-like rings<br>
+        output &nbsp;&nbsp; 2 numbers &nbsp;&rarr;&nbsp; <span class="tot">open / closed</span><br><br>
+        total <b>139,426</b> knobs &nbsp;&middot;&nbsp; trained in 7.2 min &nbsp;&middot;&nbsp;
+        <span class="tot">98.48%</span> on faces it had never seen
+      </div>
+      <p class="note">Compare: connecting all 1,024 pixels straight to 1,000 neurons would need
+      <strong>1,024,000</strong> knobs in a single layer &mdash; and it still would not find an
+      edge that moved two pixels sideways. Sliding 9 numbers does both jobs.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span class="mono">convolution</span> &nbsp;=&nbsp; slide a small set of numbers over a big set
+  of numbers, multiplying and adding.<br>
+  <span class="mono">CNN</span> &nbsp;=&nbsp; a network built out of those sliding rules, stacked
+  in layers.
+</footer>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------- shared helpers ---------- */
+
+  // Map a 0-9 brightness to an actual grey. Deliberately theme-independent:
+  // this is a picture, and a picture looks the same under either theme.
+  function greyOf(v){ var g = Math.round(24 + (v/9)*215); return "rgb("+g+","+g+","+g+")"; }
+  function inkOn(v){ return v >= 5 ? "#12181d" : "#e8eef2"; }
+
+  function mkCell(txt, cls){
+    var d = document.createElement("div");
+    d.className = "cell" + (cls ? " " + cls : "");
+    d.textContent = txt;
+    return d;
+  }
+
+  function paintPixel(el, v){
+    el.style.background = greyOf(v);
+    el.style.color = inkOn(v);
+  }
+
+  // Diverging colour for an activation, scaled against the largest magnitude seen.
+  function paintAct(el, v, max){
+    var m = max || 1, t = Math.max(-1, Math.min(1, v/m));
+    var css = getComputedStyle(document.documentElement);
+    if (Math.abs(t) < 0.04){
+      el.style.background = css.getPropertyValue("--surface-2");
+      el.style.color = css.getPropertyValue("--ink-3");
+    } else {
+      el.style.background = t > 0 ? css.getPropertyValue("--pos") : css.getPropertyValue("--neg");
+      el.style.opacity = String(0.25 + 0.75*Math.abs(t));
+      el.style.color = "#fff";
+    }
+  }
+
+  /* ================= STAGE 1 : the 1-D strip ================= */
+
+  var S1 = [9,9,9,1,1,1], K1 = [1,-1];
+  var s1Strip = document.getElementById("d1-strip"),
+      s1Out   = document.getElementById("d1-out"),
+      s1Math  = document.getElementById("d1-math"),
+      s1Pos   = document.getElementById("d1-pos");
+  var s1i = 0;
+
+  function drawS1(){
+    s1Strip.innerHTML = "";
+    S1.forEach(function(v, i){
+      var c = mkCell(v);
+      paintPixel(c, v);
+      if (i === s1i || i === s1i+1) c.classList.add("win");
+      s1Strip.appendChild(c);
+    });
+
+    s1Out.innerHTML = "";
+    var vals = [];
+    for (var p = 0; p < S1.length-1; p++) vals.push(S1[p]*K1[0] + S1[p+1]*K1[1]);
+    var mx = Math.max.apply(null, vals.map(Math.abs)) || 1;
+    vals.forEach(function(v, p){
+      var c = mkCell(v);
+      if (p <= s1i) paintAct(c, v, mx);
+      else { c.style.background = "transparent"; c.style.color = "var(--ink-3)"; c.textContent = "·"; }
+      if (p === s1i) c.classList.add("cur");
+      s1Out.appendChild(c);
+    });
+
+    var a = S1[s1i], b = S1[s1i+1], r = a*K1[0] + b*K1[1];
+    s1Math.innerHTML =
+      "(" + a + " &times; <b>+1</b>) &nbsp;+&nbsp; (" + b + " &times; <b>&minus;1</b>) &nbsp;=&nbsp; " +
+      "<span class='tot'>" + r + "</span>" +
+      (r === 0 ? " &nbsp;&nbsp;<span style='opacity:.7'>flat &mdash; nothing here</span>"
+               : " &nbsp;&nbsp;<span style='opacity:.9'>&larr; brightness changed. edge found.</span>");
+    s1Pos.textContent = "position " + (s1i+1) + " of " + (S1.length-1);
+  }
+
+  document.getElementById("d1-step").onclick = function(){
+    s1i = (s1i + 1) % (S1.length - 1); drawS1();
+  };
+  document.getElementById("d1-reset").onclick = function(){ s1i = 0; drawS1(); };
+
+  /* ================= STAGE 2 : the 2-D grid ================= */
+
+  var OPEN = [
+    [8,8,8,8,8,8,8,8],
+    [8,8,1,1,1,1,8,8],
+    [8,1,9,9,9,9,1,8],
+    [1,9,9,2,2,9,9,1],
+    [1,9,9,2,2,9,9,1],
+    [8,1,9,9,9,9,1,8],
+    [8,8,1,1,1,1,8,8],
+    [8,8,8,8,8,8,8,8]
+  ];
+  var SHUT = [
+    [8,8,8,8,8,8,8,8],
+    [8,8,8,8,8,8,8,8],
+    [8,8,8,8,8,8,8,8],
+    [8,1,1,1,1,1,1,8],
+    [8,1,1,1,1,1,1,8],
+    [8,8,8,8,8,8,8,8],
+    [8,8,8,8,8,8,8,8],
+    [8,8,8,8,8,8,8,8]
+  ];
+
+  var KERNELS = {
+    hedge:{ m:[[-1,-1,-1],[0,0,0],[1,1,1]], d:1,
+      note:"Top row subtracts what is above, bottom row adds what is below. Equal above and below → they cancel to 0. Different → a big number. That is a horizontal edge detector." },
+    vedge:{ m:[[-1,0,1],[-1,0,1],[-1,0,1]], d:1,
+      note:"The same trick rotated 90°: left column subtracts, right column adds. Now it fires on vertical edges instead — the sides of the iris rather than the lids." },
+    blur:{ m:[[1,1,1],[1,1,1],[1,1,1]], d:9,
+      note:"All nine weights equal, divided by 9 — so each output is just the average of its neighbourhood. Nothing is detected; detail is smoothed away. Kernels do not have to find things." },
+    sharp:{ m:[[0,-1,0],[-1,5,-1],[0,-1,0]], d:1,
+      note:"Take 5× the centre pixel, then subtract its four neighbours. Where the centre already stands out from its surroundings, the difference is exaggerated. Edges get crisper." },
+    rand:{ m:[[0.3,-0.8,0.5],[-0.4,0.1,-0.3],[0.9,0.6,-0.1]], d:1,
+      note:"Nine random numbers — exactly how every kernel in the real network starts. The output is meaningless mush. Training is the process that turns THIS into the detectors above." }
+  };
+
+  var kName = "hedge", r0 = 0, c0 = 0, timer = null;
+  var inEl   = document.getElementById("d2-in"),
+      kEl    = document.getElementById("d2-k"),
+      outEl  = document.getElementById("d2-out"),
+      mathEl = document.getElementById("d2-math"),
+      posEl  = document.getElementById("d2-pos"),
+      noteEl = document.getElementById("d2-note");
+
+  function convAll(img, ker){
+    var m = ker.m, d = ker.d, out = [];
+    for (var r = 0; r < 6; r++){
+      out.push([]);
+      for (var c = 0; c < 6; c++){
+        var s = 0;
+        for (var i = 0; i < 3; i++)
+          for (var j = 0; j < 3; j++)
+            s += img[r+i][c+j] * m[i][j];
+        out[r].push(s/d);
+      }
+    }
+    return out;
+  }
+
+  function fmt(n){
+    var v = Math.round(n*10)/10;
+    return (Math.abs(v) >= 100) ? String(Math.round(v)) : String(v);
+  }
+
+  function drawS2(){
+    var ker = KERNELS[kName];
+
+    // input, with the current 3x3 window outlined
+    inEl.innerHTML = "";
+    for (var r = 0; r < 8; r++){
+      for (var c = 0; c < 8; c++){
+        var v = OPEN[r][c], cell = mkCell(v);
+        paintPixel(cell, v);
+        if (r >= r0 && r < r0+3 && c >= c0 && c < c0+3) cell.classList.add("win");
+        (function(rr, cc){
+          cell.onclick = function(){
+            r0 = Math.max(0, Math.min(5, rr));
+            c0 = Math.max(0, Math.min(5, cc));
+            drawS2();
+          };
+        })(r, c);
+        inEl.appendChild(cell);
+      }
+    }
+
+    // kernel
+    kEl.innerHTML = "";
+    for (var i = 0; i < 3; i++)
+      for (var j = 0; j < 3; j++)
+        kEl.appendChild(mkCell(ker.m[i][j] > 0 ? "+"+ker.m[i][j] : String(ker.m[i][j])));
+
+    // output feature map, revealed up to the current position
+    var out = convAll(OPEN, ker), flat = [];
+    out.forEach(function(row){ row.forEach(function(v){ flat.push(Math.abs(v)); }); });
+    var mx = Math.max.apply(null, flat) || 1;
+    var idxNow = r0*6 + c0;
+
+    outEl.innerHTML = "";
+    for (var r = 0; r < 6; r++){
+      for (var c = 0; c < 6; c++){
+        var val = out[r][c], k = r*6 + c, cell = mkCell(fmt(val));
+        if (k <= idxNow) paintAct(cell, val, mx);
+        else { cell.style.background = "var(--surface-2)"; cell.style.color = "var(--ink-3)"; cell.textContent = "·"; }
+        if (k === idxNow) cell.classList.add("cur");
+        outEl.appendChild(cell);
+      }
+    }
+
+    // the arithmetic, laid out as patch x kernel = products
+    var rows = [], total = 0;
+    for (var a = 0; a < 3; a++){
+      var parts = [];
+      for (var b = 0; b < 3; b++){
+        var pv = OPEN[r0+a][c0+b], kv = ker.m[a][b], pr = pv*kv;
+        total += pr;
+        parts.push(String(pv).padStart(2) + "×" + (kv>0?"+":"") + kv + "=" + String(fmt(pr)).padStart(5));
+      }
+      rows.push(parts.join("  &nbsp; "));
+    }
+    mathEl.innerHTML =
+      rows.join("<br>") +
+      "<br><br>sum = <span class='tot'>" + fmt(total) + "</span>" +
+      (ker.d !== 1 ? " &divide; " + ker.d + " = <span class='tot'>" + fmt(total/ker.d) + "</span>" : "") +
+      " &nbsp;&rarr;&nbsp; goes into output cell <b>row " + (r0+1) + ", col " + (c0+1) + "</b>";
+
+    posEl.textContent = "window at row " + (r0+1) + ", col " + (c0+1) + " of 6×6";
+    noteEl.textContent = ker.note;
+  }
+
+  document.getElementById("d2-step").onclick = function(){
+    c0++; if (c0 > 5){ c0 = 0; r0++; if (r0 > 5) r0 = 0; }
+    drawS2();
+  };
+  document.getElementById("d2-reset").onclick = function(){
+    r0 = 0; c0 = 0; stop(); drawS2();
+  };
+
+  var playBtn = document.getElementById("d2-play");
+  function stop(){
+    if (timer){ clearInterval(timer); timer = null; }
+    playBtn.textContent = "Auto-slide";
+    playBtn.setAttribute("aria-pressed","false");
+  }
+  playBtn.onclick = function(){
+    if (timer){ stop(); return; }
+    playBtn.textContent = "Pause";
+    playBtn.setAttribute("aria-pressed","true");
+    timer = setInterval(function(){
+      c0++; if (c0 > 5){ c0 = 0; r0++; if (r0 > 5){ r0 = 0; } }
+      drawS2();
+    }, 240);
+  };
+
+  Array.prototype.forEach.call(document.querySelectorAll("[data-k]"), function(b){
+    b.onclick = function(){
+      Array.prototype.forEach.call(document.querySelectorAll("[data-k]"), function(o){
+        o.setAttribute("aria-pressed", String(o === b));
+      });
+      kName = b.getAttribute("data-k");
+      drawS2();
+    };
+  });
+
+  /* ================= STAGE 3 : side-by-side comparison ================= */
+
+  function renderStatic(elId, img){
+    var el = document.getElementById(elId);
+    el.innerHTML = "";
+    el.style.gridTemplateColumns = "repeat(" + img[0].length + ",auto)";
+    img.forEach(function(row){
+      row.forEach(function(v){
+        var c = mkCell(v, "sm");
+        paintPixel(c, v);
+        el.appendChild(c);
+      });
+    });
+  }
+
+  function renderMap(elId, img){
+    var out = convAll(img, KERNELS.hedge), flat = [];
+    out.forEach(function(row){ row.forEach(function(v){ flat.push(Math.abs(v)); }); });
+    var mx = Math.max.apply(null, flat) || 1;
+    var el = document.getElementById(elId);
+    el.innerHTML = "";
+    el.style.gridTemplateColumns = "repeat(6,auto)";
+    out.forEach(function(row){
+      row.forEach(function(v){
+        var c = mkCell(fmt(v), "sm");
+        paintAct(c, v, mx);
+        el.appendChild(c);
+      });
+    });
+  }
+
+  renderStatic("c-open-in", OPEN);
+  renderMap("c-open-out", OPEN);
+  renderStatic("c-shut-in", SHUT);
+  renderMap("c-shut-out", SHUT);
+
+  drawS1();
+  drawS2();
+})();
+</script>

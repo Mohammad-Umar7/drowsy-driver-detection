@@ -224,6 +224,7 @@ docs/
   01-foundations.md       images, pixels, landmarks, EAR — assumes zero background
   02-cnn-explained.md     what a CNN and a kernel are, worked with real numbers
   03-training-explained.md loss, gradients, backprop, overfitting, reading the logs
+  convolution-bench.html   INTERACTIVE - open in a browser, step a kernel across an eye
 ```
 
 `src/preprocess.py` is the most important small file: training and live inference
