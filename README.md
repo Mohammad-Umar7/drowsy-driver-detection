@@ -51,7 +51,7 @@ is more robust than either alone.
 ## Quick start
 
 ```bash
-git clone https://github.com/Mohammad-umer7/drowsy-driver-detection
+git clone https://github.com/Mohammad-Umar7/drowsy-driver-detection
 cd drowsy-driver-detection
 python -m venv .venv
 .venv\Scripts\activate          # Windows   (source .venv/bin/activate on mac/linux)
@@ -89,7 +89,7 @@ curl -L -o data/raw/mrlEyes_2018_01.zip https://mrl.cs.vsb.cz/data/eyedataset/mr
 # 2. unzip, preprocess, split BY SUBJECT
 python scripts/prepare_data.py
 
-# 3. train  (~2 min on an RTX 4070)
+# 3. train  (~7 min on an RTX 4070)
 python -m src.train
 
 # 4. evaluate on subjects the model has never seen
@@ -159,10 +159,27 @@ An overall average hides this. The model is **4.3 points worse on people wearing
 glasses** — reflections and frames genuinely obscure the eye. Reporting that is
 more valuable than reporting only the headline number.
 
+| Training curves | Confusion matrix | ROC |
+|---|---|---|
+| ![training](reports/training_curves.png) | ![confusion](reports/confusion_matrix.png) | ![roc](reports/roc_curve.png) |
+
 The temporal state machine is covered by 26 simulated-time tests
 (`tests/test_drowsiness.py`) that verify normal blinking does **not** alarm,
 a 1.2 s closure **does**, talking is not mistaken for yawning, and the verdict is
-identical at 10, 30 and 60 FPS.
+identical at 10, 30 and 60 FPS:
+
+```
+[2] realistic blinking (0.2 s every 4 s) -> must NOT alarm
+      PASS  still AWAKE          -> PERCLOS 5.3%, 7 blinks counted
+[3] eyes shut 1.2 s -> CRITICAL almost immediately
+      PASS  microsleep flag set
+[6] talking (0.3 s mouth movements) -> must NOT count as yawns
+      PASS  zero yawns counted   -> the duration gate rejected all of them
+[9] SAME 1.0 s closure at 10 / 30 / 60 FPS -> identical verdict
+      PASS  [(10,'CRITICAL'), (30,'CRITICAL'), (60,'CRITICAL')]
+
+26 passed, 0 failed
+```
 
 ---
 
@@ -204,7 +221,9 @@ scripts/
 tests/
   test_drowsiness.py   26 simulated-time tests, no webcam required
 docs/
-  01-foundations.md    images, CNNs, landmarks, EAR — assumes zero background
+  01-foundations.md       images, pixels, landmarks, EAR — assumes zero background
+  02-cnn-explained.md     what a CNN and a kernel are, worked with real numbers
+  03-training-explained.md loss, gradients, backprop, overfitting, reading the logs
 ```
 
 `src/preprocess.py` is the most important small file: training and live inference
