@@ -214,6 +214,38 @@ def test_perclos_warmup():
     print(f"        -> PERCLOS {st.perclos*100:.0f}% ignored: {st.reasons[-1]}")
 
 
+def test_alarm_releases_when_eyes_reopen():
+    print("\n[13] CRITICAL must release the moment the eyes reopen")
+    m = DrowsinessMonitor()
+    # A long closure: PERCLOS pinned at 100%, alarm screaming.
+    st, t = run(m, 15.0, 1000.0, ear=EAR_SHUT)
+    check("screams while eyes are shut", st.level == Level.CRITICAL,
+          f"got {st.level.name}")
+
+    # Eyes open. PERCLOS is still ~75% because it averages 30 seconds, but the
+    # driver is visibly awake, so it must stop shouting WAKE UP.
+    st, t = run(m, 5.0, t, ear=EAR_OPEN)
+    check("PERCLOS still high", st.perclos > 0.5, f"got {st.perclos:.2f}")
+    check("but no longer CRITICAL", st.level != Level.CRITICAL,
+          f"got {st.level.name}")
+    check("still warns DROWSY", st.level == Level.DROWSY,
+          f"got {st.level.name}")
+    check("reason says recovering",
+          any("recovering" in r for r in st.reasons), f"got {st.reasons}")
+    print(f"        -> PERCLOS {st.perclos*100:.0f}% but "
+          f"{st.reasons[0]} (not screaming)")
+
+    # A normal blink during recovery must not flip it back to CRITICAL.
+    st, t = run(m, 0.2, t, ear=EAR_SHUT)
+    check("a blink during recovery does not re-trigger",
+          st.level != Level.CRITICAL, f"got {st.level.name}")
+
+    # Genuinely closing them again must scream immediately.
+    st, _ = run(m, D.microsleep_sec + 0.5, t, ear=EAR_SHUT)
+    check("closing them again screams again", st.level == Level.CRITICAL,
+          f"got {st.level.name}")
+
+
 def test_face_lost():
     print("\n[11] face disappears -> NO_FACE after the grace period")
     m = DrowsinessMonitor()
@@ -233,7 +265,8 @@ if __name__ == "__main__":
     for fn in (test_awake, test_normal_blinks_do_not_alarm, test_microsleep,
                test_perclos_slow_slide, test_yawns, test_talking_is_not_a_yawn,
                test_head_nod, test_looking_away, test_frame_rate_independence,
-               test_cnn_ear_fusion, test_perclos_warmup, test_face_lost):
+               test_cnn_ear_fusion, test_perclos_warmup,
+               test_alarm_releases_when_eyes_reopen, test_face_lost):
         fn()
     print("\n" + "=" * 60)
     print(f"{_passed} passed, {_failed} failed")

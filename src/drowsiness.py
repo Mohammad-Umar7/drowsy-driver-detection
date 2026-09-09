@@ -295,12 +295,29 @@ class DrowsinessMonitor:
         if microsleep:
             level = Level.CRITICAL
             reasons.append(f"MICROSLEEP {closure_sec:.1f}s")
+
+        # Are the eyes shut RIGHT NOW, for longer than an ordinary blink?
+        # Requiring more than blink_max_sec stops a single blink during
+        # recovery from flipping the alarm back on.
+        closed_now = closed and closure_sec >= self.cfg.blink_max_sec
+
         if not perclos_ready:
             reasons.append(f"PERCLOS warming up ({tot:.0f}/"
                            f"{self.cfg.perclos_min_obs_sec:.0f}s)")
         elif perclos >= self.cfg.perclos_critical:
-            level = Level.CRITICAL
-            reasons.append(f"PERCLOS {perclos*100:.0f}% (critical)")
+            # PERCLOS is a 30-SECOND AVERAGE, so after a long closure it stays
+            # high for up to 30 s even once the driver is wide awake again.
+            # Shouting WAKE UP at someone whose eyes are demonstrably open is
+            # exactly how a safety device gets switched off -- so CRITICAL also
+            # requires the eyes to be shut at this moment. The trend still
+            # reports DROWSY the whole time it decays, which is the honest
+            # reading: recently very drowsy, currently awake.
+            if closed_now:
+                level = max(level, Level.CRITICAL)
+                reasons.append(f"PERCLOS {perclos*100:.0f}% (critical)")
+            else:
+                level = max(level, Level.DROWSY)
+                reasons.append(f"PERCLOS {perclos*100:.0f}% (recovering)")
         elif perclos >= self.cfg.perclos_warn:
             level = max(level, Level.DROWSY)
             reasons.append(f"PERCLOS {perclos*100:.0f}%")

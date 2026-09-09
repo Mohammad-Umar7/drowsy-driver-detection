@@ -244,6 +244,7 @@ def main():
     # FPS over a rolling window of 30 frames -- a single-frame estimate is far
     # too noisy to read on screen.
     times = deque(maxlen=30)
+    t_prev = None
     debug = False
     WIN = "Drowsy Driver Detection"
     cv2.namedWindow(WIN, cv2.WINDOW_AUTOSIZE)
@@ -325,8 +326,16 @@ def main():
             for box in (obs.box_left, obs.box_right):
                 cv2.rectangle(frame, box[:2], box[2:], c, 1)
 
-        times.append(time.time() - t0)
-        fps = 1.0 / max(1e-6, float(np.mean(times)))
+        # True end-to-end frame rate, measured from the start of one iteration
+        # to the start of the next so it INCLUDES the camera read.
+        # Timing only the processing block reports how fast our code is
+        # (~145 FPS) rather than the rate the user actually sees (~20 FPS),
+        # which is worse than no number at all.
+        loop_now = time.time()
+        if t_prev is not None:
+            times.append(loop_now - t_prev)
+        t_prev = loop_now
+        fps = 1.0 / max(1e-6, float(np.mean(times))) if times else 0.0
         draw_hud(frame, st, obs, fps, ear_thr, model is not None,
                  alarm.enabled, debug)
 

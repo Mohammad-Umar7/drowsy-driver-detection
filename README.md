@@ -163,7 +163,7 @@ more valuable than reporting only the headline number.
 |---|---|---|
 | ![training](reports/training_curves.png) | ![confusion](reports/confusion_matrix.png) | ![roc](reports/roc_curve.png) |
 
-The temporal state machine is covered by 28 simulated-time tests
+The temporal state machine is covered by 35 simulated-time tests
 (`tests/test_drowsiness.py`) that verify normal blinking does **not** alarm,
 a sustained closure **does**, talking is not mistaken for yawning, and the
 verdict is identical at 10, 30 and 60 FPS:
@@ -180,7 +180,7 @@ verdict is identical at 10, 30 and 60 FPS:
 [12] PERCLOS must not fire before 12 s of data exist
       PASS  PERCLOS 34% ignored: PERCLOS warming up (4/12s)
 
-28 passed, 0 failed
+35 passed, 0 failed
 ```
 
 Every duration in the tests is read from `config.py` rather than hard-coded, so
