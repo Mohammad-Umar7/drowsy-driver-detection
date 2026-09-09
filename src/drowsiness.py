@@ -59,7 +59,7 @@ class Level(IntEnum):
 LEVEL_TEXT = {
     Level.NO_FACE: "NO FACE",
     Level.AWAKE: "AWAKE",
-    Level.DISTRACTED: "EYES OFF ROAD",
+    Level.DISTRACTED: "LOOK AT THE ROAD",
     Level.DROWSY: "DROWSY",
     Level.CRITICAL: "WAKE UP!",
 }
@@ -92,6 +92,8 @@ class DrowsyState:
     distracted: bool = False
     reasons: list = field(default_factory=list)
     should_alarm: bool = False
+    alarm_kind: str = ""        # 'critical' | 'drowsy' | 'distract'
+    eyes_reliable: bool = True
 
 
 class DrowsinessMonitor:
@@ -129,6 +131,7 @@ class DrowsinessMonitor:
         self._distract_since = None
         self._last_face_t = None
         self._last_alarm_t = 0.0
+        self._last_distract_alarm_t = 0.0
 
         self.blinks = 0
         self.yawns = 0
@@ -181,7 +184,8 @@ class DrowsinessMonitor:
     # ------------------------------------------------------------------
     def update(self, face_found: bool, closed_prob: Optional[float] = None,
                ear: float = 0.3, mar: float = 0.0, pitch: float = 0.0,
-               yaw: float = 0.0, now: Optional[float] = None) -> DrowsyState:
+               yaw: float = 0.0, eyes_reliable: bool = True,
+               now: Optional[float] = None) -> DrowsyState:
         now = time.time() if now is None else now
         dt = 0.0 if self._last_t is None else max(0.0, min(1.0, now - self._last_t))
         self._last_t = now
@@ -214,9 +218,20 @@ class DrowsinessMonitor:
         self._prune(now)
 
         # ---- 1. is the eye closed right now? -------------------------
-        score = self._fuse(closed_prob, ear)
-        closed = score > 0.5
-        self._win.append((now, closed, dt))
+        # When the head is turned far enough that no eye is properly visible,
+        # the numbers coming in are nonsense (a 4 px-wide eye returned EAR 1.05
+        # in real testing). Guessing from nonsense is worse than abstaining:
+        # we PAUSE the eye pipeline instead. PERCLOS stops accumulating rather
+        # than filling with false closures, and the closure timer resets so a
+        # head turn can never be mistaken for a microsleep.
+        if not eyes_reliable:
+            self._closed_since = None
+            self._microsleep_fired = False
+            score, closed = 0.0, False
+        else:
+            score = self._fuse(closed_prob, ear)
+            closed = score > 0.5
+            self._win.append((now, closed, dt))
 
         # ---- 2. PERCLOS ----------------------------------------------
         # Time-weighted, NOT a simple frame count: sum the seconds spent
@@ -292,6 +307,9 @@ class DrowsinessMonitor:
         # flashing red. An unexplained alarm gets switched off.
         reasons, level = [], Level.AWAKE
 
+        if not eyes_reliable:
+            reasons.append("eyes not visible (head turned)")
+
         if microsleep:
             level = Level.CRITICAL
             reasons.append(f"MICROSLEEP {closure_sec:.1f}s")
@@ -335,11 +353,24 @@ class DrowsinessMonitor:
             reasons.append(f"looking away ({yaw:+.0f} deg)")
 
         # ---- 7. alarm, with a cooldown so it does not machine-gun -----
-        should_alarm = False
+        # Two independent alarm channels, because they mean different things:
+        #   drowsy/critical -> urgent, 4 s apart
+        #   distracted      -> a nudge, 9 s apart and a softer sound
+        # Nagging someone every 4 s while they check a mirror is exactly how a
+        # safety system ends up switched off.
+        should_alarm, alarm_kind = False, ""
         if level >= Level.DROWSY:
             if now - self._last_alarm_t >= self.cfg.alarm_cooldown_sec:
                 should_alarm = True
+                alarm_kind = ("critical" if level == Level.CRITICAL
+                              else "drowsy")
                 self._last_alarm_t = now
+        elif level == Level.DISTRACTED:
+            if now - self._last_distract_alarm_t >= \
+                    self.cfg.distract_alarm_cooldown_sec:
+                should_alarm = True
+                alarm_kind = "distract"
+                self._last_distract_alarm_t = now
 
         blink_rate = len(self._blink_times) * 60.0 / self.cfg.yawn_window_sec
 
@@ -350,6 +381,7 @@ class DrowsinessMonitor:
             yawns=self.yawns, yawn_rate=yawn_rate, yawning=yawning,
             nodding=nodding, distracted=distracted,
             reasons=reasons or ["normal"], should_alarm=should_alarm,
+            alarm_kind=alarm_kind, eyes_reliable=eyes_reliable,
         )
         self.state = s
         return s

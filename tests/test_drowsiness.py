@@ -246,6 +246,60 @@ def test_alarm_releases_when_eyes_reopen():
           f"got {st.level.name}")
 
 
+def test_head_turn_is_not_a_closure():
+    print("\n[14] a head turn must NEVER be read as closed eyes")
+    m = DrowsinessMonitor()
+    _, t = run(m, 6.0, 1000.0, ear=EAR_OPEN)
+
+    # Head turned far. face.py reports eyes_reliable=False, and the numbers
+    # arriving are garbage -- measured at yaw +70 deg the far eye was 4.6 px
+    # wide and returned EAR 1.05 with the CNN scoring it 0.68 "closed".
+    # Feed exactly that garbage and confirm it is ignored, not believed.
+    st = None
+    for i in range(int(5.0 * FPS)):
+        st = m.update(face_found=True, closed_prob=0.68, ear=1.05,
+                      yaw=70.0, eyes_reliable=False, now=t + i * DT)
+    t += 5.0
+
+    check("not flagged closed", not st.closed, f"score {st.closed_score:.2f}")
+    check("no microsleep from a head turn", not st.microsleep)
+    check("never reaches CRITICAL", st.level != Level.CRITICAL,
+          f"got {st.level.name}")
+    check("reports looking away instead", st.level == Level.DISTRACTED,
+          f"got {st.level.name}")
+    check("PERCLOS did not accumulate", st.perclos < 0.05,
+          f"got {st.perclos:.3f}")
+    check("says why", any("not visible" in r or "looking away" in r
+                          for r in st.reasons), f"got {st.reasons}")
+    print(f"        -> {st.reasons}")
+
+    # Facing forward again with genuinely shut eyes must still work.
+    st, _ = run(m, D.microsleep_sec + 0.4, t, ear=EAR_SHUT)
+    check("real closure after the turn still fires",
+          st.level == Level.CRITICAL, f"got {st.level.name}")
+
+
+def test_distraction_alarm_is_gentler():
+    print("\n[15] looking away alarms softly, and far less often")
+    m = DrowsinessMonitor()
+    _, t = run(m, 5.0, 1000.0, ear=EAR_OPEN)
+    fired = []
+    n = int(30.0 * FPS)
+    for i in range(n):
+        st = m.update(face_found=True, ear=EAR_OPEN, yaw=50.0,
+                      now=t + i * DT)
+        if st.should_alarm:
+            fired.append(st.alarm_kind)
+    check("it does alert", len(fired) > 0, "never alerted at all")
+    check("uses the gentle sound", all(k == "distract" for k in fired),
+          f"got {set(fired)}")
+    # 30 s at a 9 s cooldown is at most 4 nudges, versus 7 on the urgent path.
+    check("nags at most 4 times in 30 s", len(fired) <= 4,
+          f"fired {len(fired)} times")
+    print(f"        -> {len(fired)} gentle nudges in 30 s "
+          f"(cooldown {D.distract_alarm_cooldown_sec:.0f}s)")
+
+
 def test_face_lost():
     print("\n[11] face disappears -> NO_FACE after the grace period")
     m = DrowsinessMonitor()
@@ -266,7 +320,9 @@ if __name__ == "__main__":
                test_perclos_slow_slide, test_yawns, test_talking_is_not_a_yawn,
                test_head_nod, test_looking_away, test_frame_rate_independence,
                test_cnn_ear_fusion, test_perclos_warmup,
-               test_alarm_releases_when_eyes_reopen, test_face_lost):
+               test_alarm_releases_when_eyes_reopen,
+               test_head_turn_is_not_a_closure,
+               test_distraction_alarm_is_gentler, test_face_lost):
         fn()
     print("\n" + "=" * 60)
     print(f"{_passed} passed, {_failed} failed")

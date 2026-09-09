@@ -26,8 +26,15 @@ class FaceObs:
     landmarks_px: np.ndarray      # (478, 2) pixel coordinates
     ear_left: float
     ear_right: float
-    ear: float                    # mean of both eyes
+    ear: float                    # visibility-weighted, NOT a naive mean
     mar: float
+    width_left: float             # eye corner-to-corner width in pixels
+    width_right: float
+    vis_left: float               # 0..1, this eye vs the wider one
+    vis_right: float
+    use_left: bool                # is this eye worth trusting this frame?
+    use_right: bool
+    eyes_reliable: bool           # is ANY eye big enough to trust at all?
     pitch: float
     yaw: float
     roll: float
@@ -51,9 +58,15 @@ class FaceTracker:
     """
 
     def __init__(self, img_size: int = 32, crop_margin: float = 1.35,
-                 det_conf: float = 0.5, track_conf: float = 0.5):
+                 det_conf: float = 0.5, track_conf: float = 0.5,
+                 vis_min_ratio: float = None, min_width_px: float = None):
+        from .config import CFG
         self.img_size = img_size
         self.crop_margin = crop_margin
+        self.vis_min_ratio = (CFG.drowsy.eye_vis_min_ratio
+                              if vis_min_ratio is None else vis_min_ratio)
+        self.min_width_px = (CFG.drowsy.eye_min_width_px
+                             if min_width_px is None else min_width_px)
         self._mesh = mp.solutions.face_mesh.FaceMesh(
             static_image_mode=False,
             max_num_faces=1,
@@ -83,6 +96,35 @@ class FaceTracker:
                                    pts[G.MOUTH_CORNERS])
         pitch, yaw, roll = G.head_pose(pts, frame_bgr.shape)
 
+        # ---- how much can we trust each eye this frame? -------------------
+        # Corner-to-corner width in pixels. When the head turns away, the far
+        # eye's width collapses by roughly cos(yaw) while the near eye keeps
+        # its size -- so the ratio between them is a direct, calibration-free
+        # measure of which eye is actually facing the camera.
+        w_l = float(np.linalg.norm(pts[G.LEFT_EYE_EAR[0]] -
+                                   pts[G.LEFT_EYE_EAR[3]]))
+        w_r = float(np.linalg.norm(pts[G.RIGHT_EYE_EAR[0]] -
+                                   pts[G.RIGHT_EYE_EAR[3]]))
+        w_max = max(w_l, w_r, 1e-6)
+        vis_l, vis_r = w_l / w_max, w_r / w_max
+
+        # An eye counts only if it is both facing us AND big enough in pixels
+        # for the eyelid landmarks to mean anything.
+        use_l = (vis_l >= self.vis_min_ratio) and (w_l >= self.min_width_px)
+        use_r = (vis_r >= self.vis_min_ratio) and (w_r >= self.min_width_px)
+        eyes_reliable = use_l or use_r
+
+        # Report EAR from the eyes we actually trust. Averaging in a
+        # foreshortened eye is what produced false "closed" readings on turns.
+        if use_l and use_r:
+            ear = (ear_l + ear_r) / 2.0
+        elif use_l:
+            ear = ear_l
+        elif use_r:
+            ear = ear_r
+        else:
+            ear = max(ear_l, ear_r)     # nothing trustworthy; bias toward open
+
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         box_l = G.bbox_from_points(pts[G.LEFT_EYE_CONTOUR],
                                    self.crop_margin, frame_bgr.shape)
@@ -93,8 +135,12 @@ class FaceTracker:
 
         return FaceObs(
             landmarks_px=pts,
-            ear_left=ear_l, ear_right=ear_r, ear=(ear_l + ear_r) / 2.0,
-            mar=mar, pitch=pitch, yaw=yaw, roll=roll,
+            ear_left=ear_l, ear_right=ear_r, ear=ear,
+            mar=mar,
+            width_left=w_l, width_right=w_r,
+            vis_left=vis_l, vis_right=vis_r,
+            use_left=use_l, use_right=use_r, eyes_reliable=eyes_reliable,
+            pitch=pitch, yaw=yaw, roll=roll,
             eye_left=eye_l, eye_right=eye_r,
             box_left=box_l, box_right=box_r,
         )

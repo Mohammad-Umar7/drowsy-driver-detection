@@ -98,8 +98,8 @@ def draw_hud(frame, st, obs, fps, ear_thr, model_on, alarm_on, debug):
         cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), 14)
 
     # --- metrics panel ---
-    py = h - 132
-    draw_panel(frame, 0, py, 330, 132)
+    py = h - 153
+    draw_panel(frame, 0, py, 340, 153)
     y = py + 22
 
     draw_bar(frame, 12, y - 10, 150, 12, st.perclos,
@@ -122,6 +122,18 @@ def draw_hud(frame, st, obs, fps, ear_thr, model_on, alarm_on, debug):
         cv2.putText(frame, f"pitch {obs.pitch:+5.1f}  yaw {obs.yaw:+5.1f}  "
                            f"roll {obs.roll:+5.1f}", (12, y), FONT, 0.46,
                     (215, 215, 215), 1, cv2.LINE_AA)
+        y += 21
+        # Eye size in pixels and which eyes are being trusted. This line is
+        # what makes the "turned head = false closure" class of bug visible
+        # instead of mysterious.
+        eyes = ("L" if obs.use_left else "-") + ("R" if obs.use_right else "-")
+        wmax = max(obs.width_left, obs.width_right)
+        wmin = min(obs.width_left, obs.width_right)
+        cv2.putText(frame, f"eye px {wmax:.0f}/{wmin:.0f}  using [{eyes}]"
+                           f"{'' if st.eyes_reliable else '  UNRELIABLE'}",
+                    (12, y), FONT, 0.46,
+                    (215, 215, 215) if st.eyes_reliable else (0, 200, 255),
+                    1, cv2.LINE_AA)
         y += 21
 
     cv2.putText(frame, f"blinks {st.blinks} ({st.blink_rate:.0f}/min)   "
@@ -187,8 +199,8 @@ def load_calibration():
         d = json.loads(p.read_text())
         if "ear_thresh" in d:
             print(f"[ok] using calibrated EAR threshold {d['ear_thresh']:.3f}")
-            return float(d["ear_thresh"])
-    return CFG.drowsy.ear_thresh
+            return float(d["ear_thresh"]), True
+    return CFG.drowsy.ear_thresh, False
 
 
 def save_calibration(**kw):
@@ -207,13 +219,17 @@ def main():
     ap.add_argument("--record", type=str, default=None)
     ap.add_argument("--no-model", action="store_true")
     ap.add_argument("--no-alarm", action="store_true")
-    ap.add_argument("--width", type=int, default=960)
-    ap.add_argument("--height", type=int, default=540)
+    # 1280x720, not 960x540. Cameras do NOT error on an unsupported resolution
+    # -- they silently hand back whatever they do support. This webcam quietly
+    # downgraded a 960x540 request to 640x480, which halved the eye to ~23 px
+    # and made the eyelid landmarks unusable. Always verify what you got.
+    ap.add_argument("--width", type=int, default=1280)
+    ap.add_argument("--height", type=int, default=720)
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, cnn_thr = (None, 0.5) if args.no_model else load_model(device)
-    ear_thr = load_calibration()
+    ear_thr, calibrated = load_calibration()
 
     tracker = FaceTracker(CFG.data.img_size, CFG.data.crop_margin)
     monitor = DrowsinessMonitor(ear_thresh=ear_thr, cnn_thresh=cnn_thr,
@@ -231,6 +247,14 @@ def main():
         cap = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
+        got_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        got_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if (got_w, got_h) != (args.width, args.height):
+            print(f"[warn] asked for {args.width}x{args.height}, camera gave "
+                  f"{got_w}x{got_h}. Eye crops will be smaller, which hurts "
+                  f"accuracy. Try --width/--height with a supported mode.")
+        else:
+            print(f"[ok] capture {got_w}x{got_h}")
     if not cap.isOpened():
         raise SystemExit("could not open video source")
 
@@ -254,7 +278,16 @@ def main():
         cv2.setWindowProperty(WIN, cv2.WND_PROP_TOPMOST, 1)
     except cv2.error:
         pass
-    print("[run] window open. press 'c' to calibrate, 'q' to quit")
+    # Auto-calibrate when no saved threshold exists. Measured on a real user:
+    # their open-eye EAR was 0.181, BELOW the 0.210 default, so the geometry
+    # branch called their open eyes closed all session. They were told to press
+    # 'c' three times and never did -- so the system now does it itself rather
+    # than depending on the user remembering.
+    if not calibrated:
+        calib.start()
+        print("[auto-calibrate] measuring your open-eye EAR for 3 s - "
+              "keep your eyes OPEN and look at the camera")
+    print("[run] window open. press 'c' to recalibrate, 'q' to quit")
 
     # Session stats, printed on exit so a short run explains itself.
     t_session = time.time()
@@ -290,10 +323,18 @@ def main():
             ).to(device)
             with torch.no_grad():
                 p = torch.softmax(model(batch), dim=1)[:, 1]
-            # max(): if EITHER eye reads closed, treat the driver as closed.
-            # Safety-biased on purpose, and it also survives one eye being
-            # partly occluded by the nose at an angle.
-            closed_prob = float(p.max().item())
+
+            # Take the max ONLY over eyes we can actually see.
+            #
+            # The naive max() over both eyes is safety-biased and correct when
+            # facing forward, but it breaks badly on a head turn: measured at
+            # yaw +70 deg the far eye was 4.6 px wide and the CNN scored that
+            # sliver 0.68 "closed", while the near eye correctly said 0.03.
+            # max() picked the garbage and reported a false closure.
+            # face.py flags which eyes are worth trusting; we honour that.
+            usable = [v for v, use in zip(p.tolist(),
+                                          (obs.use_left, obs.use_right)) if use]
+            closed_prob = max(usable) if usable else None
 
         if obs is not None and calib.active:
             new_thr = calib.feed(obs.ear)
@@ -310,6 +351,7 @@ def main():
             mar=obs.mar if obs else 0.0,
             pitch=obs.pitch if obs else 0.0,
             yaw=obs.yaw if obs else 0.0,
+            eyes_reliable=obs.eyes_reliable if obs else False,
         )
 
         if obs is not None:
@@ -318,7 +360,7 @@ def main():
         peak_level = max(peak_level, st.level)
         if st.should_alarm:
             n_alarms += 1
-            alarm.fire(critical=st.level == Level.CRITICAL)
+            alarm.fire(kind=st.alarm_kind or "drowsy")
 
         if obs is not None:
             draw_landmarks(frame, obs)

@@ -55,15 +55,25 @@ class Alarm:
             with self._lock:
                 self._playing = False
 
-    def fire(self, critical: bool = False):
+    # Three escalating sounds. Distraction is deliberately the quietest and
+    # shortest -- it is a reminder, not an emergency, and an aggressive tone
+    # for a mirror check would train the driver to ignore every alert.
+    PATTERNS = {
+        "distract": [(600, 120)],
+        "drowsy":   [(900, 200), (700, 200)],
+        "critical": [(1500, 180), (1900, 180), (1500, 180), (1900, 300)],
+    }
+
+    def fire(self, kind: str = "drowsy", critical: bool = False):
         if not self.enabled:
             return
+        if critical:                    # backwards-compatible call style
+            kind = "critical"
         with self._lock:
             if self._playing:
                 return
             self._playing = True
-        pattern = ([(1500, 180), (1900, 180), (1500, 180), (1900, 300)]
-                   if critical else [(900, 200), (700, 200)])
+        pattern = self.PATTERNS.get(kind, self.PATTERNS["drowsy"])
         threading.Thread(target=self._play, args=(pattern,), daemon=True).start()
 
     def toggle(self) -> bool:

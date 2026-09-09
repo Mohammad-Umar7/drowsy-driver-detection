@@ -58,6 +58,19 @@ class DrowsyCfg:
     cnn_closed_thresh: float = 0.50     # TUNE  P(closed) above this = closed
     fusion_cnn_weight: float = 0.65     # how much we trust the CNN vs EAR (0..1)
 
+    # ---- eye visibility ----
+    # When the head turns, the far eye is foreshortened into a sliver. Both EAR
+    # and the CNN then read nonsense from it -- and because we take the MAX of
+    # the two eyes (safety bias), that nonsense wins and we report a false
+    # closure. An eye narrower than this fraction of the wider one is dropped.
+    eye_vis_min_ratio: float = 0.62     # TUNE
+    # Absolute garbage floor, in pixels of corner-to-corner eye width.
+    # Measured on a real head turn: the far eye collapsed to 4.6 px and
+    # returned EAR 1.05 -- impossible for a real eye -- while the CNN scored it
+    # 0.68 "closed". Anything this narrow carries no information at all.
+    # Set well below a usable eye (~23 px) so it rejects only true nonsense.
+    eye_min_width_px: float = 15.0      # TUNE
+
     # ---- blink / microsleep ----
     # How long the eyes must stay shut before we call it a microsleep.
     # Research uses ~0.5-1.0 s, but that feels twitchy in a demo and punishes
@@ -90,6 +103,10 @@ class DrowsyCfg:
 
     # ---- alarm / robustness ----
     alarm_cooldown_sec: float = 4.0
+    # Looking away is a nudge, not an emergency, so it gets a quieter sound and
+    # a much longer gap between repeats. Nagging every 4 s while someone checks
+    # a mirror is how the whole system ends up switched off.
+    distract_alarm_cooldown_sec: float = 9.0
     face_lost_grace_sec: float = 2.0    # ignore brief tracking dropouts
 
 
