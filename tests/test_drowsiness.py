@@ -23,7 +23,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.config import CFG                            # noqa: E402
 from src.drowsiness import DrowsinessMonitor, Level   # noqa: E402
+
+D = CFG.drowsy   # durations come from config, never hard-coded here
 
 FPS = 30.0
 DT = 1.0 / FPS
@@ -81,10 +84,12 @@ def test_normal_blinks_do_not_alarm():
 
 
 def test_microsleep():
-    print("\n[3] eyes shut 1.2 s -> CRITICAL almost immediately")
+    secs = D.microsleep_sec + 0.4
+    print(f"\n[3] eyes shut {secs:.1f} s -> CRITICAL "
+          f"(threshold {D.microsleep_sec:.1f} s)")
     m = DrowsinessMonitor()
     _, t = run(m, 5, 1000.0, ear=EAR_OPEN)
-    st, _ = run(m, 1.2, t, ear=EAR_SHUT)
+    st, _ = run(m, secs, t, ear=EAR_SHUT)
     check("microsleep flag set", st.microsleep)
     check("level is CRITICAL", st.level == Level.CRITICAL,
           f"got {st.level.name}")
@@ -109,11 +114,12 @@ def test_perclos_slow_slide():
 
 
 def test_yawns():
-    print("\n[5] three 2 s yawns in a minute -> DROWSY")
+    secs = D.yawn_min_sec + 0.6
+    print(f"\n[5] three {secs:.1f} s yawns in a minute -> DROWSY")
     m = DrowsinessMonitor()
     t = 1000.0
     for _ in range(3):
-        _, t = run(m, 2.0, t, ear=EAR_OPEN, mar=0.75)
+        _, t = run(m, secs, t, ear=EAR_OPEN, mar=0.75)
         _, t = run(m, 4.0, t, ear=EAR_OPEN, mar=0.10)
     st = m.state
     check("3 yawns counted", st.yawns == 3, f"got {st.yawns}")
@@ -133,27 +139,32 @@ def test_talking_is_not_a_yawn():
 
 
 def test_head_nod():
-    print("\n[7] head down 2 s -> nodding detected")
+    secs = D.nod_min_sec + 0.5
+    print(f"\n[7] head down {secs:.1f} s -> nodding "
+          f"(threshold {D.nod_min_sec:.1f} s)")
     m = DrowsinessMonitor()
     _, t = run(m, 3, 1000.0, ear=EAR_OPEN)
-    st, _ = run(m, 2.0, t, ear=EAR_OPEN, pitch=-25.0)
+    st, _ = run(m, secs, t, ear=EAR_OPEN, pitch=-25.0)
     check("nodding flag set", st.nodding)
     check("level at least DROWSY", st.level >= Level.DROWSY,
           f"got {st.level.name}")
 
 
 def test_looking_away():
-    print("\n[8] head turned 45 deg for 2 s -> DISTRACTED, not DROWSY")
+    secs = D.distract_min_sec + 0.5
+    print(f"\n[8] head turned 45 deg for {secs:.1f} s -> DISTRACTED, not DROWSY")
     m = DrowsinessMonitor()
     _, t = run(m, 3, 1000.0, ear=EAR_OPEN)
-    st, _ = run(m, 2.0, t, ear=EAR_OPEN, yaw=45.0)
+    st, _ = run(m, secs, t, ear=EAR_OPEN, yaw=45.0)
     check("distracted flag set", st.distracted)
     check("level is DISTRACTED", st.level == Level.DISTRACTED,
           f"got {st.level.name}")
 
 
 def test_frame_rate_independence():
-    print("\n[9] SAME 1.0 s closure at 10 / 30 / 60 FPS -> identical verdict")
+    secs = D.microsleep_sec + 0.3
+    print(f"\n[9] SAME {secs:.1f} s closure at 10 / 30 / 60 FPS "
+          f"-> identical verdict")
     results = {}
     for fps in (10, 30, 60):
         m = DrowsinessMonitor()
@@ -162,7 +173,7 @@ def test_frame_rate_independence():
             m.update(face_found=True, ear=EAR_OPEN, now=t + i * dt)
         t += 5.0
         st = None
-        for i in range(int(1.0 * fps)):
+        for i in range(int(secs * fps)):
             st = m.update(face_found=True, ear=EAR_SHUT, now=t + i * dt)
         results[fps] = st.level
     check("all frame rates agree", len(set(results.values())) == 1,
@@ -189,6 +200,20 @@ def test_cnn_ear_fusion():
           f"score {st.closed_score:.2f}")
 
 
+def test_perclos_warmup():
+    print(f"\n[12] PERCLOS must not fire before "
+          f"{D.perclos_min_obs_sec:.0f} s of data exist")
+    m = DrowsinessMonitor()
+    # 3 s open then 1.5 s closed = 33% PERCLOS, but only 4.5 s observed.
+    _, t = run(m, 3.0, 1000.0, ear=EAR_OPEN)
+    st, _ = run(m, 1.5, t, ear=EAR_SHUT)
+    check("PERCLOS reads high", st.perclos > 0.25, f"got {st.perclos:.2f}")
+    check("but did NOT trigger on PERCLOS",
+          not any("PERCLOS" in r and "warming" not in r for r in st.reasons),
+          f"got {st.reasons}")
+    print(f"        -> PERCLOS {st.perclos*100:.0f}% ignored: {st.reasons[-1]}")
+
+
 def test_face_lost():
     print("\n[11] face disappears -> NO_FACE after the grace period")
     m = DrowsinessMonitor()
@@ -208,7 +233,7 @@ if __name__ == "__main__":
     for fn in (test_awake, test_normal_blinks_do_not_alarm, test_microsleep,
                test_perclos_slow_slide, test_yawns, test_talking_is_not_a_yawn,
                test_head_nod, test_looking_away, test_frame_rate_independence,
-               test_cnn_ear_fusion, test_face_lost):
+               test_cnn_ear_fusion, test_perclos_warmup, test_face_lost):
         fn()
     print("\n" + "=" * 60)
     print(f"{_passed} passed, {_failed} failed")

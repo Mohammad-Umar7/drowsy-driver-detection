@@ -59,27 +59,37 @@ class DrowsyCfg:
     fusion_cnn_weight: float = 0.65     # how much we trust the CNN vs EAR (0..1)
 
     # ---- blink / microsleep ----
-    microsleep_sec: float = 0.8         # TUNE  eyes shut this long = instant alarm
+    # How long the eyes must stay shut before we call it a microsleep.
+    # Research uses ~0.5-1.0 s, but that feels twitchy in a demo and punishes
+    # a slow deliberate blink. 2.0 s is unambiguous: nobody blinks for 2 s.
+    microsleep_sec: float = 2.0         # TUNE
     blink_max_sec: float = 0.45         # closures shorter than this are normal blinks
 
     # ---- PERCLOS (the automotive-industry metric) ----
     perclos_window_sec: float = 30.0    # rolling window length
     perclos_warn: float = 0.15          # TUNE  15% of time closed -> DROWSY
     perclos_critical: float = 0.30      # TUNE  30% of time closed -> CRITICAL
+    # PERCLOS is a PERCENTAGE, so it is meaningless until the window holds
+    # enough data. With only 3 s observed, a single 1 s blink reads as 33% and
+    # would fire CRITICAL the moment the app starts. Below this much observed
+    # time PERCLOS is displayed but never triggers. Microsleep is unaffected --
+    # it is an absolute duration, so it stays instant from the first second.
+    perclos_min_obs_sec: float = 12.0
 
     # ---- yawning ----
     mar_thresh: float = 0.60            # TUNE
-    yawn_min_sec: float = 1.2           # mouth must stay open this long to count
+    yawn_min_sec: float = 1.5           # mouth must stay open this long to count
     yawn_window_sec: float = 60.0
     yawn_rate_warn: int = 3             # >=3 yawns per minute = fatigue
 
     # ---- head pose ----
     pitch_nod_deg: float = -18.0        # TUNE  head tipped down this much
-    nod_min_sec: float = 1.5
+    nod_min_sec: float = 2.5            # glancing at the dashboard is not nodding off
     yaw_distract_deg: float = 35.0      # looking away from the road
+    distract_min_sec: float = 2.5       # a shoulder check is not distraction
 
     # ---- alarm / robustness ----
-    alarm_cooldown_sec: float = 3.0
+    alarm_cooldown_sec: float = 4.0
     face_lost_grace_sec: float = 2.0    # ignore brief tracking dropouts
 
 

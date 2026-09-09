@@ -6,7 +6,7 @@ THE CENTRAL INSIGHT OF THIS PROJECT
 =============================================================================
 
     A closed eye is NOT drowsiness.
-    A closed eye for 800 milliseconds IS.
+    A closed eye held for two seconds IS.
 
 You blink roughly every 4 seconds and a blink lasts 100-400 ms. A system that
 alarms on any closed frame fires constantly, the driver switches it off, and it
@@ -22,7 +22,7 @@ Four signals are tracked, each catching a different stage of falling asleep:
                   most heavily validated fatigue measure in the literature.
                   Above ~15% = drowsy. Catches the SLOW slide into sleep.
 
-  2. MICROSLEEP   one unbroken closure >= 0.8 s.
+  2. MICROSLEEP   one unbroken closure >= microsleep_sec (2.0 s by default).
                   This is a person actually falling asleep for a moment. It
                   fires INSTANTLY -- no window, no averaging. Catches the
                   SUDDEN event.
@@ -224,6 +224,9 @@ class DrowsinessMonitor:
         tot = sum(d for _, _, d in self._win)
         cls = sum(d for _, c, d in self._win if c)
         perclos = (cls / tot) if tot > 0.5 else 0.0
+        # Only trust the percentage once we have observed enough time -- see
+        # perclos_min_obs_sec in config.py for why.
+        perclos_ready = tot >= self.cfg.perclos_min_obs_sec
 
         # ---- 3. closure tracking: blink vs microsleep ----------------
         microsleep = False
@@ -278,7 +281,7 @@ class DrowsinessMonitor:
         if abs(yaw) >= self.cfg.yaw_distract_deg:
             if self._distract_since is None:
                 self._distract_since = now
-            elif now - self._distract_since >= 1.5:
+            elif now - self._distract_since >= self.cfg.distract_min_sec:
                 distracted = True
         else:
             self._distract_since = None
@@ -292,7 +295,10 @@ class DrowsinessMonitor:
         if microsleep:
             level = Level.CRITICAL
             reasons.append(f"MICROSLEEP {closure_sec:.1f}s")
-        if perclos >= self.cfg.perclos_critical:
+        if not perclos_ready:
+            reasons.append(f"PERCLOS warming up ({tot:.0f}/"
+                           f"{self.cfg.perclos_min_obs_sec:.0f}s)")
+        elif perclos >= self.cfg.perclos_critical:
             level = Level.CRITICAL
             reasons.append(f"PERCLOS {perclos*100:.0f}% (critical)")
         elif perclos >= self.cfg.perclos_warn:

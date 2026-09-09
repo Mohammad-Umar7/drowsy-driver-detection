@@ -163,23 +163,44 @@ more valuable than reporting only the headline number.
 |---|---|---|
 | ![training](reports/training_curves.png) | ![confusion](reports/confusion_matrix.png) | ![roc](reports/roc_curve.png) |
 
-The temporal state machine is covered by 26 simulated-time tests
+The temporal state machine is covered by 28 simulated-time tests
 (`tests/test_drowsiness.py`) that verify normal blinking does **not** alarm,
-a 1.2 s closure **does**, talking is not mistaken for yawning, and the verdict is
-identical at 10, 30 and 60 FPS:
+a sustained closure **does**, talking is not mistaken for yawning, and the
+verdict is identical at 10, 30 and 60 FPS:
 
 ```
 [2] realistic blinking (0.2 s every 4 s) -> must NOT alarm
       PASS  still AWAKE          -> PERCLOS 5.3%, 7 blinks counted
-[3] eyes shut 1.2 s -> CRITICAL almost immediately
+[3] eyes shut 2.4 s -> CRITICAL (threshold 2.0 s)
       PASS  microsleep flag set
 [6] talking (0.3 s mouth movements) -> must NOT count as yawns
       PASS  zero yawns counted   -> the duration gate rejected all of them
-[9] SAME 1.0 s closure at 10 / 30 / 60 FPS -> identical verdict
+[9] SAME 2.3 s closure at 10 / 30 / 60 FPS -> identical verdict
       PASS  [(10,'CRITICAL'), (30,'CRITICAL'), (60,'CRITICAL')]
+[12] PERCLOS must not fire before 12 s of data exist
+      PASS  PERCLOS 34% ignored: PERCLOS warming up (4/12s)
 
-26 passed, 0 failed
+28 passed, 0 failed
 ```
+
+Every duration in the tests is read from `config.py` rather than hard-coded, so
+retuning a threshold cannot silently invalidate the test that guards it.
+
+### Live run on a real face
+
+```
+session      : 11.9s, 223 frames (18.8 FPS)
+face tracked : 223/223 frames (100%)
+peak state   : WAKE UP!
+max PERCLOS  : 31.0%  (warn at 15%)
+blinks 5 | yawns 0 | alarms fired 3
+```
+
+That first run also exposed a genuine bug: PERCLOS is a *percentage*, so with
+only 12 s of data observed a single long blink read as 31% and fired CRITICAL
+almost immediately. `perclos_min_obs_sec` now suppresses PERCLOS triggering
+until the window holds enough data. Microsleep is unaffected — it measures an
+absolute duration, so it stays responsive from the first second.
 
 ---
 
@@ -239,10 +260,23 @@ All thresholds live in [`src/config.py`](src/config.py), marked `# TUNE`.
 | Symptom | Fix |
 |---------|-----|
 | Alarms while you are awake | Press `c` to calibrate. Then lower `ear_calib_ratio` (0.75 → 0.70) |
+| Fires too eagerly on a blink | Raise `microsleep_sec` (2.0 → 3.0) |
+| Too slow to react when you doze | Lower `microsleep_sec` (2.0 → 1.0) |
 | Misses your closed eyes | Raise `ear_calib_ratio`, or lower `perclos_warn` |
 | Yawns not detected | Lower `mar_thresh` (0.60 → 0.50) |
-| Talking counted as yawning | Raise `yawn_min_sec` (1.2 → 1.8) |
+| Talking counted as yawning | Raise `yawn_min_sec` (1.5 → 2.0) |
+| Fires when you check mirrors | Raise `distract_min_sec` and `nod_min_sec` |
 | Too many alarms in traffic | Raise `perclos_warn` and `alarm_cooldown_sec` |
+
+Current duration gates — nothing triggers until it has lasted this long:
+
+| Trigger | Must last | Result |
+|---|---|---|
+| Eyes closed | **2.0 s** | CRITICAL — instant, no window needed |
+| Mouth open | **1.5 s** | counts as one yawn (3/min → DROWSY) |
+| Head tipped down | **2.5 s** | DROWSY — nodding off |
+| Head turned away | **2.5 s** | EYES OFF ROAD |
+| PERCLOS above 15% | needs **12 s** of data first | DROWSY |
 
 ---
 

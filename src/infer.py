@@ -245,12 +245,35 @@ def main():
     # too noisy to read on screen.
     times = deque(maxlen=30)
     debug = False
-    print("[run] press 'c' to calibrate, 'q' to quit")
+    WIN = "Drowsy Driver Detection"
+    cv2.namedWindow(WIN, cv2.WINDOW_AUTOSIZE)
+    # Keep the window on top so it cannot open behind the editor and look
+    # like the app failed to start.
+    try:
+        cv2.setWindowProperty(WIN, cv2.WND_PROP_TOPMOST, 1)
+    except cv2.error:
+        pass
+    print("[run] window open. press 'c' to calibrate, 'q' to quit")
+
+    # Session stats, printed on exit so a short run explains itself.
+    t_session = time.time()
+    n_frames = n_faces = n_alarms = 0
+    max_perclos = 0.0
+    peak_level = Level.AWAKE
+    read_fail = 0
 
     while True:
         ok, frame = cap.read()
         if not ok:
-            break
+            # One dropped frame is normal (USB hiccup). Only give up if the
+            # camera stops delivering entirely.
+            read_fail += 1
+            if read_fail > 60:
+                print("[error] camera stopped delivering frames")
+                break
+            continue
+        read_fail = 0
+        n_frames += 1
         # Mirror the webcam so moving right moves you right on screen.
         if not args.video:
             frame = cv2.flip(frame, 1)
@@ -288,7 +311,12 @@ def main():
             yaw=obs.yaw if obs else 0.0,
         )
 
+        if obs is not None:
+            n_faces += 1
+        max_perclos = max(max_perclos, st.perclos)
+        peak_level = max(peak_level, st.level)
         if st.should_alarm:
+            n_alarms += 1
             alarm.fire(critical=st.level == Level.CRITICAL)
 
         if obs is not None:
@@ -309,7 +337,7 @@ def main():
 
         if writer is not None:
             writer.write(frame)
-        cv2.imshow("Drowsy Driver Detection", frame)
+        cv2.imshow(WIN, frame)
 
         k = cv2.waitKey(1) & 0xFF
         if k in (ord("q"), 27):
@@ -329,6 +357,19 @@ def main():
             p = Path(CFG.paths.reports) / f"shot_{int(time.time())}.png"
             cv2.imwrite(str(p), frame)
             print(f"[saved] {p}")
+
+    dur = time.time() - t_session
+    print("-" * 52)
+    print(f"session      : {dur:.1f}s, {n_frames} frames "
+          f"({n_frames/max(dur,1e-6):.1f} FPS)")
+    print(f"face tracked : {n_faces}/{n_frames} frames "
+          f"({100*n_faces/max(1,n_frames):.0f}%)")
+    print(f"peak state   : {LEVEL_TEXT[peak_level]}")
+    print(f"max PERCLOS  : {max_perclos*100:.1f}%  "
+          f"(warn at {CFG.drowsy.perclos_warn*100:.0f}%)")
+    print(f"blinks {monitor.blinks} | yawns {monitor.yawns} | "
+          f"alarms fired {n_alarms}")
+    print("-" * 52)
 
     cap.release()
     if writer is not None:
