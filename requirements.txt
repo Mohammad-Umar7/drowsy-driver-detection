@@ -1,0 +1,16 @@
+# --- core vision ---
+opencv-python>=4.8
+mediapipe>=0.10.9
+numpy>=1.24,<2.0
+
+# --- deep learning (install torch matching your CUDA from pytorch.org) ---
+torch>=2.1
+torchvision>=0.16
+
+# --- training utilities ---
+scikit-learn>=1.3
+matplotlib>=3.7
+tqdm>=4.66
+
+# --- dataset download (optional) ---
+kagglehub>=0.2

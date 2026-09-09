@@ -1,0 +1,342 @@
+"""
+Live webcam drowsiness detector -- the demo you actually show people.
+
+    python -m src.infer                     # webcam, trained model
+    python -m src.infer --no-model          # geometry only (EAR), no CNN
+    python -m src.infer --video clip.mp4    # run on a recorded file
+    python -m src.infer --record out.mp4    # save what you see
+
+Keys:
+    q / ESC   quit
+    c         calibrate (hold eyes OPEN and look at the camera for 3 s)
+    r         reset all counters
+    a         mute / unmute the alarm
+    d         toggle the debug panel (eye crops + landmarks)
+    s         save a screenshot to reports/
+
+=============================================================================
+HOW THE LOOP IS STRUCTURED, AND WHY
+=============================================================================
+
+    read frame -> FaceTracker -> CNN on both eyes -> DrowsinessMonitor -> draw
+
+The two eye crops are stacked into ONE batch of 2 and sent through the model in
+a single call. Two separate calls would pay the Python/GPU launch overhead
+twice, and that overhead dwarfs the actual maths on a model this small.
+
+torch.no_grad() disables gradient tracking. During training PyTorch records
+every operation so it can back-propagate; at inference we never do, so
+recording is pure waste - it costs memory and time. Forgetting no_grad() is a
+very common cause of a "slow" inference loop.
+"""
+import argparse
+import time
+from collections import deque
+from pathlib import Path
+
+import cv2
+import numpy as np
+import torch
+
+from .alarm import Alarm
+from .config import CFG
+from .drowsiness import (DrowsinessMonitor, EarCalibrator, Level,
+                         LEVEL_COLOR, LEVEL_TEXT)
+from .face import FaceTracker
+from .model import build_model
+
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+
+# ---------------------------------------------------------------------------
+# drawing helpers
+# ---------------------------------------------------------------------------
+def draw_panel(img, x, y, w, h, alpha=0.55):
+    """
+    Translucent dark panel behind text so it stays readable on any background.
+
+    Trick: draw the rectangle on a COPY, then blend the copy with the original.
+    OpenCV has no native alpha, so blending two full images is how you fake it.
+    """
+    sub = img[y:y + h, x:x + w]
+    if sub.size == 0:
+        return
+    box = np.zeros_like(sub)
+    img[y:y + h, x:x + w] = cv2.addWeighted(sub, 1 - alpha, box, alpha, 0)
+
+
+def draw_bar(img, x, y, w, h, frac, color, label, warn_at=None):
+    """Horizontal progress bar with an optional threshold tick mark."""
+    cv2.rectangle(img, (x, y), (x + w, y + h), (70, 70, 70), 1)
+    fill = int(w * max(0.0, min(1.0, frac)))
+    if fill > 0:
+        cv2.rectangle(img, (x + 1, y + 1), (x + fill - 1, y + h - 1), color, -1)
+    if warn_at is not None:
+        wx = x + int(w * warn_at)
+        cv2.line(img, (wx, y - 2), (wx, y + h + 2), (255, 255, 255), 1)
+    cv2.putText(img, label, (x + w + 8, y + h - 2), FONT, 0.42,
+                (230, 230, 230), 1, cv2.LINE_AA)
+
+
+def draw_hud(frame, st, obs, fps, ear_thr, model_on, alarm_on, debug):
+    h, w = frame.shape[:2]
+    color = LEVEL_COLOR[st.level]
+
+    # --- big status banner ---
+    draw_panel(frame, 0, 0, w, 62)
+    cv2.putText(frame, LEVEL_TEXT[st.level], (14, 44), FONT, 1.25, color, 3,
+                cv2.LINE_AA)
+    reason = " | ".join(st.reasons[:2])
+    cv2.putText(frame, reason, (w - 12 - 8 * len(reason), 26), FONT, 0.46,
+                (215, 215, 215), 1, cv2.LINE_AA)
+    cv2.putText(frame, f"{fps:4.1f} FPS", (w - 88, 50), FONT, 0.5,
+                (180, 180, 180), 1, cv2.LINE_AA)
+
+    # --- red border pulse on CRITICAL: peripheral vision catches motion even
+    #     when you are not looking straight at the screen ---
+    if st.level == Level.CRITICAL and int(time.time() * 6) % 2 == 0:
+        cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), 14)
+
+    # --- metrics panel ---
+    py = h - 132
+    draw_panel(frame, 0, py, 330, 132)
+    y = py + 22
+
+    draw_bar(frame, 12, y - 10, 150, 12, st.perclos,
+             (0, 165, 255) if st.perclos >= CFG.drowsy.perclos_warn
+             else (90, 190, 90),
+             f"PERCLOS {st.perclos*100:4.1f}%",
+             warn_at=CFG.drowsy.perclos_warn)
+    y += 24
+
+    draw_bar(frame, 12, y - 10, 150, 12, st.closed_score,
+             (0, 0, 235) if st.closed else (90, 190, 90),
+             f"closed {st.closed_score:.2f}", warn_at=0.5)
+    y += 24
+
+    if obs is not None:
+        cv2.putText(frame, f"EAR {obs.ear:.3f} (thr {ear_thr:.3f})   "
+                           f"MAR {obs.mar:.2f}", (12, y), FONT, 0.46,
+                    (215, 215, 215), 1, cv2.LINE_AA)
+        y += 21
+        cv2.putText(frame, f"pitch {obs.pitch:+5.1f}  yaw {obs.yaw:+5.1f}  "
+                           f"roll {obs.roll:+5.1f}", (12, y), FONT, 0.46,
+                    (215, 215, 215), 1, cv2.LINE_AA)
+        y += 21
+
+    cv2.putText(frame, f"blinks {st.blinks} ({st.blink_rate:.0f}/min)   "
+                       f"yawns {st.yawns} ({st.yawn_rate:.0f}/min)",
+                (12, y), FONT, 0.46, (215, 215, 215), 1, cv2.LINE_AA)
+
+    # --- footer ---
+    mode = "CNN+EAR" if model_on else "EAR only"
+    cv2.putText(frame, f"[{mode}]  alarm {'ON' if alarm_on else 'OFF'}   "
+                       f"q quit  c calibrate  r reset  a alarm  d debug  s shot",
+                (12, h - 8), FONT, 0.40, (170, 170, 170), 1, cv2.LINE_AA)
+
+    # --- debug: show exactly what the CNN sees ---
+    if debug and obs is not None:
+        for i, eye in enumerate((obs.eye_left, obs.eye_right)):
+            big = cv2.resize((eye * 255).astype(np.uint8), (96, 96),
+                             interpolation=cv2.INTER_NEAREST)
+            big = cv2.cvtColor(big, cv2.COLOR_GRAY2BGR)
+            x0 = w - 210 + i * 102
+            frame[70:166, x0:x0 + 96] = big
+            cv2.rectangle(frame, (x0, 70), (x0 + 96, 166), (110, 110, 110), 1)
+        cv2.putText(frame, "what the CNN sees", (w - 210, 182), FONT, 0.40,
+                    (170, 170, 170), 1, cv2.LINE_AA)
+
+
+def draw_landmarks(frame, obs):
+    """Outline the eyes and mouth, and colour the eyes by state."""
+    from . import geometry as G
+    for idx in (G.LEFT_EYE_CONTOUR, G.RIGHT_EYE_CONTOUR):
+        pts = obs.landmarks_px[idx].astype(np.int32)
+        cv2.polylines(frame, [pts], True, (0, 220, 120), 1, cv2.LINE_AA)
+    mouth = obs.landmarks_px[G.MOUTH_UPPER + G.MOUTH_LOWER[::-1]].astype(np.int32)
+    cv2.polylines(frame, [mouth], True, (200, 160, 0), 1, cv2.LINE_AA)
+
+
+# ---------------------------------------------------------------------------
+def load_model(device):
+    """Load the trained checkpoint, or return None to fall back to EAR only."""
+    p = Path(CFG.paths.best_model)
+    if not p.exists():
+        print(f"[warn] no model at {p} - running on EAR geometry only.")
+        print("       train one with:  python -m src.train")
+        return None, 0.5
+    ck = torch.load(p, map_location=device)
+    model = build_model(ck.get("arch", "eyenet")).to(device).eval()
+    model.load_state_dict(ck["model"])
+
+    # Use the threshold evaluate.py validated, not a guessed 0.5.
+    thr = CFG.drowsy.cnn_closed_thresh
+    cp = Path(CFG.paths.calibration)
+    if cp.exists():
+        import json
+        thr = json.loads(cp.read_text()).get("cnn_closed_thresh", thr)
+    print(f"[ok] model loaded (epoch {ck['epoch']}, "
+          f"val balanced acc {ck['val_bal_acc']*100:.2f}%)  threshold={thr:.3f}")
+    return model, thr
+
+
+def load_calibration():
+    p = Path(CFG.paths.calibration)
+    if p.exists():
+        import json
+        d = json.loads(p.read_text())
+        if "ear_thresh" in d:
+            print(f"[ok] using calibrated EAR threshold {d['ear_thresh']:.3f}")
+            return float(d["ear_thresh"])
+    return CFG.drowsy.ear_thresh
+
+
+def save_calibration(**kw):
+    import json
+    p = Path(CFG.paths.calibration)
+    d = json.loads(p.read_text()) if p.exists() else {}
+    d.update(kw)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(d, indent=2))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--camera", type=int, default=0)
+    ap.add_argument("--video", type=str, default=None)
+    ap.add_argument("--record", type=str, default=None)
+    ap.add_argument("--no-model", action="store_true")
+    ap.add_argument("--no-alarm", action="store_true")
+    ap.add_argument("--width", type=int, default=960)
+    ap.add_argument("--height", type=int, default=540)
+    args = ap.parse_args()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model, cnn_thr = (None, 0.5) if args.no_model else load_model(device)
+    ear_thr = load_calibration()
+
+    tracker = FaceTracker(CFG.data.img_size, CFG.data.crop_margin)
+    monitor = DrowsinessMonitor(ear_thresh=ear_thr, cnn_thresh=cnn_thr,
+                                cnn_weight=CFG.drowsy.fusion_cnn_weight
+                                if model is not None else 0.0)
+    alarm = Alarm(enabled=not args.no_alarm)
+    calib = EarCalibrator()
+
+    if args.video:
+        cap = cv2.VideoCapture(args.video)
+    else:
+        # CAP_DSHOW is the DirectShow backend. On Windows the default MSMF
+        # backend often takes several seconds to open a webcam; DSHOW is
+        # near-instant. On other platforms this flag is simply ignored.
+        cap = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
+    if not cap.isOpened():
+        raise SystemExit("could not open video source")
+
+    writer = None
+    if args.record:
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        writer = cv2.VideoWriter(args.record, fourcc, 20.0, (w, h))
+
+    # FPS over a rolling window of 30 frames -- a single-frame estimate is far
+    # too noisy to read on screen.
+    times = deque(maxlen=30)
+    debug = False
+    print("[run] press 'c' to calibrate, 'q' to quit")
+
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        # Mirror the webcam so moving right moves you right on screen.
+        if not args.video:
+            frame = cv2.flip(frame, 1)
+
+        t0 = time.time()
+        obs = tracker.process(frame)
+
+        closed_prob = None
+        if obs is not None and model is not None:
+            # Both eyes as ONE batch of 2 -> a single GPU call.
+            batch = torch.from_numpy(
+                np.stack([obs.eye_left, obs.eye_right])[:, None]
+            ).to(device)
+            with torch.no_grad():
+                p = torch.softmax(model(batch), dim=1)[:, 1]
+            # max(): if EITHER eye reads closed, treat the driver as closed.
+            # Safety-biased on purpose, and it also survives one eye being
+            # partly occluded by the nose at an angle.
+            closed_prob = float(p.max().item())
+
+        if obs is not None and calib.active:
+            new_thr = calib.feed(obs.ear)
+            if new_thr is not None:
+                ear_thr = new_thr
+                monitor.ear_thresh = new_thr
+                save_calibration(ear_thresh=new_thr)
+                print(f"[calibrated] EAR threshold -> {new_thr:.3f}")
+
+        st = monitor.update(
+            face_found=obs is not None,
+            closed_prob=closed_prob,
+            ear=obs.ear if obs else 0.3,
+            mar=obs.mar if obs else 0.0,
+            pitch=obs.pitch if obs else 0.0,
+            yaw=obs.yaw if obs else 0.0,
+        )
+
+        if st.should_alarm:
+            alarm.fire(critical=st.level == Level.CRITICAL)
+
+        if obs is not None:
+            draw_landmarks(frame, obs)
+            c = (0, 0, 235) if st.closed else (0, 220, 120)
+            for box in (obs.box_left, obs.box_right):
+                cv2.rectangle(frame, box[:2], box[2:], c, 1)
+
+        times.append(time.time() - t0)
+        fps = 1.0 / max(1e-6, float(np.mean(times)))
+        draw_hud(frame, st, obs, fps, ear_thr, model is not None,
+                 alarm.enabled, debug)
+
+        if calib.active:
+            cv2.putText(frame, f"CALIBRATING - keep eyes OPEN  "
+                               f"{calib.remaining():.1f}s",
+                        (14, 92), FONT, 0.75, (0, 255, 255), 2, cv2.LINE_AA)
+
+        if writer is not None:
+            writer.write(frame)
+        cv2.imshow("Drowsy Driver Detection", frame)
+
+        k = cv2.waitKey(1) & 0xFF
+        if k in (ord("q"), 27):
+            break
+        elif k == ord("c"):
+            calib.start()
+            print("[calibrating] hold your eyes open...")
+        elif k == ord("r"):
+            monitor.reset()
+            print("[reset]")
+        elif k == ord("a"):
+            print(f"[alarm] {'on' if alarm.toggle() else 'off'}")
+        elif k == ord("d"):
+            debug = not debug
+        elif k == ord("s"):
+            Path(CFG.paths.reports).mkdir(parents=True, exist_ok=True)
+            p = Path(CFG.paths.reports) / f"shot_{int(time.time())}.png"
+            cv2.imwrite(str(p), frame)
+            print(f"[saved] {p}")
+
+    cap.release()
+    if writer is not None:
+        writer.release()
+        print(f"[saved] {args.record}")
+    cv2.destroyAllWindows()
+    tracker.close()
+
+
+if __name__ == "__main__":
+    main()

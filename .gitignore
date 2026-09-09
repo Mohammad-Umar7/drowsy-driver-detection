@@ -1,0 +1,26 @@
+# datasets and the trained weights (too big / regenerable)
+data/raw/
+data/processed/
+checkpoints/*.pt
+checkpoints/*.pth
+assets/*.mp4
+assets/*.gif
+
+# live-app screenshots, but KEEP the evaluation plots + metrics
+reports/shot_*.png
+reports/_*.png
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.ipynb_checkpoints/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

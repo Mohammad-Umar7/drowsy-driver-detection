@@ -1,0 +1,99 @@
+"""
+Central configuration.
+
+Every magic number in this project lives HERE, not scattered through the code.
+Why: when you tune the system for a new person / camera / car, you edit one file.
+Thresholds you should expect to tune are marked  # TUNE
+"""
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+import json
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+@dataclass
+class Paths:
+    root: Path = ROOT
+    raw: Path = ROOT / "data" / "raw"
+    processed: Path = ROOT / "data" / "processed"
+    checkpoints: Path = ROOT / "checkpoints"
+    reports: Path = ROOT / "reports"
+    best_model: Path = ROOT / "checkpoints" / "eyenet_best.pt"
+    calibration: Path = ROOT / "checkpoints" / "calibration.json"
+
+
+@dataclass
+class DataCfg:
+    img_size: int = 32          # eye crops are resized to 32x32 grayscale
+    grayscale: bool = True
+    crop_margin: float = 1.35   # expand eye bbox by this factor before cropping
+    val_frac: float = 0.15
+    test_frac: float = 0.15
+    seed: int = 42
+
+
+@dataclass
+class TrainCfg:
+    epochs: int = 30
+    batch_size: int = 256
+    lr: float = 3e-3
+    weight_decay: float = 1e-4
+    warmup_epochs: int = 2
+    label_smoothing: float = 0.05
+    # 0 = load data in the main process. On Windows each worker is a whole new
+    # process that re-imports everything, which is slow and crash-prone. Our
+    # dataset is already in RAM (~60 MB), so there is nothing to wait on.
+    num_workers: int = 0
+    amp: bool = True            # mixed precision -> ~2x faster on an RTX 4070
+    early_stop_patience: int = 7
+    arch: str = "eyenet"        # "eyenet" (from scratch) | "mobilenet" (transfer)
+
+
+@dataclass
+class DrowsyCfg:
+    # ---- eye closure ----
+    ear_thresh: float = 0.21            # TUNE  fallback used if not calibrated
+    ear_calib_ratio: float = 0.75       # calibrated thresh = 0.75 * your open EAR
+    cnn_closed_thresh: float = 0.50     # TUNE  P(closed) above this = closed
+    fusion_cnn_weight: float = 0.65     # how much we trust the CNN vs EAR (0..1)
+
+    # ---- blink / microsleep ----
+    microsleep_sec: float = 0.8         # TUNE  eyes shut this long = instant alarm
+    blink_max_sec: float = 0.45         # closures shorter than this are normal blinks
+
+    # ---- PERCLOS (the automotive-industry metric) ----
+    perclos_window_sec: float = 30.0    # rolling window length
+    perclos_warn: float = 0.15          # TUNE  15% of time closed -> DROWSY
+    perclos_critical: float = 0.30      # TUNE  30% of time closed -> CRITICAL
+
+    # ---- yawning ----
+    mar_thresh: float = 0.60            # TUNE
+    yawn_min_sec: float = 1.2           # mouth must stay open this long to count
+    yawn_window_sec: float = 60.0
+    yawn_rate_warn: int = 3             # >=3 yawns per minute = fatigue
+
+    # ---- head pose ----
+    pitch_nod_deg: float = -18.0        # TUNE  head tipped down this much
+    nod_min_sec: float = 1.5
+    yaw_distract_deg: float = 35.0      # looking away from the road
+
+    # ---- alarm / robustness ----
+    alarm_cooldown_sec: float = 3.0
+    face_lost_grace_sec: float = 2.0    # ignore brief tracking dropouts
+
+
+@dataclass
+class Config:
+    paths: Paths = field(default_factory=Paths)
+    data: DataCfg = field(default_factory=DataCfg)
+    train: TrainCfg = field(default_factory=TrainCfg)
+    drowsy: DrowsyCfg = field(default_factory=DrowsyCfg)
+
+    def save(self, path):
+        d = asdict(self)
+        d["paths"] = {k: str(v) for k, v in d["paths"].items()}
+        Path(path).write_text(json.dumps(d, indent=2))
+
+
+CFG = Config()
