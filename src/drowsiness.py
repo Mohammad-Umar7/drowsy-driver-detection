@@ -406,35 +406,74 @@ class EarCalibrator:
     match the system. Press 'c' in the live app to run it.
     """
 
-    def __init__(self, seconds: float = 3.0, ratio: float = None):
+    def __init__(self, seconds: float = 3.0, ratio: float = None,
+                 min_samples: int = 30):
         self.seconds = seconds
         self.ratio = ratio if ratio is not None else CFG.drowsy.ear_calib_ratio
+        self.min_samples = min_samples
         self.samples = []
         self.t0 = None
+        self._armed = False
+        self.failed_reason = ""
 
     def start(self):
         self.samples = []
-        self.t0 = time.time()
+        self.t0 = None          # clock starts at the FIRST SAMPLE, not here
+        self._armed = True
+        self.failed_reason = ""
 
     @property
     def active(self) -> bool:
-        return self.t0 is not None
+        return self._armed
 
     def feed(self, ear: float) -> Optional[float]:
-        """Returns the new threshold once enough time has passed, else None."""
-        if self.t0 is None:
+        """
+        Feed one frame's EAR. Returns the new threshold once we have enough
+        data, otherwise None.
+
+        Only call this when a face is actually present.
+
+        THE BUG THIS AVOIDS: the first version started its countdown in
+        start(). If no face appeared within those 3 seconds -- the user was not
+        at the desk yet -- the window expired with almost no samples, the
+        calibrator gave up, and it did so SILENTLY. The app then ran a whole
+        session on the wrong threshold with no indication anything had failed.
+
+        Two rules fix it:
+          1. the clock starts on the first sample, so an empty room just means
+             calibration has not begun yet rather than that it failed;
+          2. BOTH a minimum duration and a minimum sample count are required,
+             so a few stray frames cannot end it early.
+        """
+        if not self._armed:
             return None
+        if self.t0 is None:
+            self.t0 = time.time()
         self.samples.append(ear)
+
         if time.time() - self.t0 < self.seconds:
             return None
-        self.t0 = None
-        if len(self.samples) < 5:
-            return None
+        if len(self.samples) < self.min_samples:
+            return None         # keep waiting; do NOT give up
+
+        self._armed = False
         import statistics
         open_ear = statistics.median(self.samples)
+
+        # Sanity check. If the median looks like a shut eye, the user was
+        # blinking, squinting or looking away. Calibrating to that would set a
+        # threshold so low the detector could never fire again -- far worse
+        # than keeping the default. Refuse, and say so.
+        if open_ear < 0.10:
+            self.failed_reason = (f"measured EAR {open_ear:.3f} looks like a "
+                                  f"CLOSED eye - keep your eyes open and "
+                                  f"press 'c' to retry")
+            return None
         return float(open_ear * self.ratio)
 
     def remaining(self) -> float:
-        if self.t0 is None:
+        if not self._armed:
             return 0.0
+        if self.t0 is None:
+            return self.seconds          # waiting for a face to appear
         return max(0.0, self.seconds - (time.time() - self.t0))

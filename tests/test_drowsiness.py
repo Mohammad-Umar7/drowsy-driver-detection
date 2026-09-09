@@ -19,12 +19,14 @@ rather than reading the clock inside. It costs one parameter and makes the code
 testable forever.
 """
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import CFG                            # noqa: E402
-from src.drowsiness import DrowsinessMonitor, Level   # noqa: E402
+from src.drowsiness import (DrowsinessMonitor, EarCalibrator,  # noqa: E402
+                            Level)
 
 D = CFG.drowsy   # durations come from config, never hard-coded here
 
@@ -300,6 +302,55 @@ def test_distraction_alarm_is_gentler():
           f"(cooldown {D.distract_alarm_cooldown_sec:.0f}s)")
 
 
+def test_calibration_waits_for_a_face():
+    print("\n[16] calibration must survive an empty room, not abort silently")
+    c = EarCalibrator(seconds=0.05, min_samples=30)
+    c.start()
+    # Nobody in front of the camera yet, so feed() is never called.
+    time.sleep(0.15)
+    check("still armed after a faceless wait", c.active)
+
+    out = None
+    for _ in range(60):
+        out = c.feed(0.30)
+        if out is not None:
+            break
+        time.sleep(0.003)
+    check("calibrates once the face appears", out is not None,
+          f"failed: {c.failed_reason!r}")
+    if out is not None:
+        expect = 0.30 * D.ear_calib_ratio
+        check("threshold derived from the measured EAR",
+              abs(out - expect) < 1e-6, f"got {out:.4f}, expected {expect:.4f}")
+        print(f"        -> open EAR 0.300 -> threshold {out:.3f}")
+
+
+def test_calibration_needs_enough_samples():
+    print("\n[17] a couple of stray frames must not end calibration")
+    c = EarCalibrator(seconds=0.02, min_samples=30)
+    c.start()
+    time.sleep(0.05)                 # the duration alone is already satisfied
+    out = c.feed(0.30)
+    check("3 samples is not enough", out is None)
+    for _ in range(3):
+        out = c.feed(0.30)
+    check("still waiting", out is None and c.active)
+
+
+def test_calibration_refuses_closed_eyes():
+    print("\n[18] calibrating on SHUT eyes must be refused, and say so")
+    c = EarCalibrator(seconds=0.02, min_samples=30)
+    c.start()
+    out = None
+    for _ in range(60):
+        out = c.feed(0.05)           # a shut eye
+        time.sleep(0.001)
+    check("refuses the bad calibration", out is None)
+    check("no longer armed", not c.active)
+    check("explains why", "CLOSED" in c.failed_reason, c.failed_reason)
+    print(f"        -> {c.failed_reason}")
+
+
 def test_face_lost():
     print("\n[11] face disappears -> NO_FACE after the grace period")
     m = DrowsinessMonitor()
@@ -322,7 +373,11 @@ if __name__ == "__main__":
                test_cnn_ear_fusion, test_perclos_warmup,
                test_alarm_releases_when_eyes_reopen,
                test_head_turn_is_not_a_closure,
-               test_distraction_alarm_is_gentler, test_face_lost):
+               test_distraction_alarm_is_gentler,
+               test_calibration_waits_for_a_face,
+               test_calibration_needs_enough_samples,
+               test_calibration_refuses_closed_eyes,
+               test_face_lost):
         fn()
     print("\n" + "=" * 60)
     print(f"{_passed} passed, {_failed} failed")

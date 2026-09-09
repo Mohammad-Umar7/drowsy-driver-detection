@@ -342,7 +342,12 @@ def main():
                 ear_thr = new_thr
                 monitor.ear_thresh = new_thr
                 save_calibration(ear_thresh=new_thr)
-                print(f"[calibrated] EAR threshold -> {new_thr:.3f}")
+                print(f"[calibrated] your open-eye EAR threshold -> "
+                      f"{new_thr:.3f}  (was {CFG.drowsy.ear_thresh:.3f})")
+            elif not calib.active and calib.failed_reason:
+                # Never fail silently: a wrong threshold ruins the whole
+                # session and the user has no way to know it happened.
+                print(f"[calibration failed] {calib.failed_reason}")
 
         st = monitor.update(
             face_found=obs is not None,
@@ -382,9 +387,11 @@ def main():
                  alarm.enabled, debug)
 
         if calib.active:
-            cv2.putText(frame, f"CALIBRATING - keep eyes OPEN  "
-                               f"{calib.remaining():.1f}s",
-                        (14, 92), FONT, 0.75, (0, 255, 255), 2, cv2.LINE_AA)
+            msg = ("CALIBRATING - keep eyes OPEN  "
+                   f"{calib.remaining():.1f}s" if obs is not None
+                   else "CALIBRATING - waiting for a face...")
+            cv2.putText(frame, msg, (14, 92), FONT, 0.75, (0, 255, 255), 2,
+                        cv2.LINE_AA)
 
         if writer is not None:
             writer.write(frame)
