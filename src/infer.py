@@ -152,6 +152,19 @@ def draw_hud(frame, st, obs, fps, ear_thr, model_on, alarm_on, debug,
                        f"yawns {st.yawns} ({st.yawn_rate:.0f}/min)",
                 (12, y), FONT, 0.46, (215, 215, 215), 1, cv2.LINE_AA)
 
+    # --- lighting readout, top-left under the banner ---
+    if lighting is not None:
+        ls = lighting.stats
+        # Amber whenever the light is genuinely difficult, so it is obvious
+        # that a bad reading might be the scene rather than the driver.
+        col = ((150, 210, 150) if ls.condition == Light.NORMAL
+               else (0, 200, 255))
+        tag = LIGHT_TEXT.get(ls.condition, "?")
+        cv2.putText(frame, f"light: {tag}  mean {ls.mean:>3.0f}  "
+                           f"gamma {ls.gamma:.2f}"
+                           f"{'' if lighting.enabled else '  [OFF]'}",
+                    (14, 82), FONT, 0.5, col, 1, cv2.LINE_AA)
+
     # --- footer ---
     mode = "CNN+EAR" if model_on else "EAR only"
     cv2.putText(frame, f"[{mode}]  alarm {'ON' if alarm_on else 'OFF'}   "
