@@ -136,6 +136,9 @@ python -m src.evaluate
 
 # 5. verify the temporal logic (no webcam needed)
 python -m tests.test_drowsiness
+
+# 6. verify the Kotlin port has not drifted from the Python
+python scripts/check_port_parity.py
 ```
 
 ---
@@ -157,10 +160,15 @@ every test image is a face the model has genuinely never seen.
 
 | Metric | Value |
 |---|---|
-| Accuracy | **98.48 %** |
-| Balanced accuracy | **98.46 %** |
+| Accuracy | **98.66 %** |
+| Balanced accuracy | **98.65 %** |
 | ROC-AUC | **0.9973** |
 | Average precision | 0.9979 |
+
+Those are measured **at the operating threshold the system actually ships**
+(0.342, chosen below) — not at the default 0.5, which scores 98.48 % / 98.46 %.
+Quoting accuracy at a cutoff the product doesn't use makes a whole results
+table untrustworthy, so both are printed side by side by `src.evaluate`.
 | Parameters | 139,426 |
 | Training time | 7.2 min (RTX 4070, mixed precision, early-stopped at epoch 27) |
 | Inference | ~78,000 eye crops/sec on GPU |
@@ -235,21 +243,26 @@ correct**.
 
 | Condition | enhancement OFF | enhancement ON |
 |---|---|---|
-| clean | 0.025 ✓ | 0.019 ✓ |
-| dusk | 0.064 ✓ | 0.025 ✓ |
-| **night** | **0.557 ✗** | **0.169 ✓** |
-| **deep night** | **0.785 ✗** | **0.274 ✓** |
-| bright sun | 0.010 ✓ | 0.024 ✓ |
-| harsh sun | 0.022 ✓ | 0.039 ✓ |
-| backlit | 0.016 ✓ | 0.031 ✓ |
+| clean | 0.018 ✓ | **0.010** ✓ |
+| dusk | 0.040 ✓ | **0.016** ✓ |
+| **night** | **0.447 ✗** | **0.118** ✓ |
+| **deep night** | **0.654 ✗** | **0.296** ✓ |
+| bright sun | 0.013 ✓ | **0.012** ✓ |
+| harsh sun | 0.018 ✓ | **0.008** ✓ |
+| backlit | 0.016 ✓ | **0.012** ✓ |
 
-**Conditions handled correctly: 5/7 → 7/7**, at 4.09 ms/frame.
+**Conditions handled correctly: 5/7 → 7/7**, at 2.54 ms/frame.
 
-Stated plainly: **sunlight already worked without this.** The CLAHE applied to
-the eye crop in `preprocess.py` was absorbing overexposure on its own, and
-normalisation makes those frames marginally *worse* (0.010 → 0.024), though both
-sit far below the threshold. The feature earns its place on **night**, where it
-takes open eyes from being misread as shut to being read correctly.
+Night is where it earns its place: without correction, darkness pushes *open*
+eyes past the decision threshold and the system reports you as asleep while
+you are wide awake.
+
+An earlier version of this made the three sunlit cases measurably **worse**
+(0.010 → 0.024, 0.022 → 0.039, 0.016 → 0.031), because gamma forced *every*
+frame to one target — so a perfectly exposed scene at mean 183 was darkened
+with gamma 2.19, the clamp ceiling, for no benefit. Frames in a comfortable
+band are now left alone, and correction is better than no correction in every
+condition.
 
 ### Live run on a real face
 
@@ -309,6 +322,7 @@ scripts/
   diagnose_pose.py guided pose diagnostic - run this when it misbehaves
   test_lighting.py night/sun robustness benchmark
   export_onnx.py   PyTorch -> ONNX for the phone, with parity verification
+  check_port_parity.py  guards the Kotlin port against silent drift
 tests/
   test_drowsiness.py   26 simulated-time tests, no webcam required
 docs/

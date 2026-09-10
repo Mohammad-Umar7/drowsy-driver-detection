@@ -145,15 +145,20 @@ aliases. Training used `INTER_AREA`, so the phone does too.
 
 | | Desktop | Android |
 |---|---|---|
-| Lighting normalisation | yes (`lighting.py`) | **not yet ported** |
+| Lighting normalisation | yes (`lighting.py`) | yes (`Lighting.kt`) |
 | Debug eye-crop view | `d` key | not present |
 | Screenshots / recording | `s` / `--record` | not present |
 | Session summary on exit | yes | not present |
 
-Night handling is the significant gap. The desktop adaptive gamma + CLAHE stage
-takes night from 0.557 to 0.169 `P(closed)`, and the phone does not have it yet.
-Phone cameras do their own auto-exposure, which helps, but this should be
-ported.
+Night handling is now ported. `Lighting.kt` is the same adaptive gamma + CLAHE
+stage, using the OpenCV already bundled, so the maths is the same
+implementation rather than a reimplementation. On desktop it takes night from
+0.447 to 0.118 `P(closed)`.
+
+`scripts/check_port_parity.py` compares the Kotlin constants and landmark
+indices against the Python mechanically, because two copies of the same logic
+drift silently. It has already caught two real cases: a dropped `contrast < 60`
+term in the lighting classifier, and a stale threshold default.
 
 ---
 
