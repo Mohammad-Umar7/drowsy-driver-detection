@@ -116,7 +116,7 @@ checkpoint. It was not assumed to be equivalent — both were run over all
 ```
 max probability difference : 4.768e-07
 decisions agreeing         : 10,076/10,076
-accuracy pytorch / onnx    : 98.48% / 98.48%
+accuracy pytorch / onnx    : 98.65% / 98.65%
 ```
 
 `scripts/export_onnx.py` exits non-zero on any decision mismatch, because an
@@ -182,7 +182,7 @@ does not detect a sideways face at all, so this cannot be deferred.
 |---|---|---|
 | "App not installed" | wrong ABI | Install `app-universal-debug.apk` |
 | Black screen | permission denied | Settings → Apps → Drowsy Driver → Permissions → Camera |
-| No face detected | too dark, or too far | Move closer; lighting normalisation is not ported yet |
+| No face detected | too dark, or too far | Move closer. Night correction is active, but software cannot recover a signal the sensor never captured |
 | Says drowsy while awake | calibration missed | Tap **Calibrate**, eyes open, hold 3 s |
 | Alarm inaudible | media volume | It plays on the **alarm** stream — raise alarm volume, not media |
 | Low FPS / phone hot | thermal throttling | Expected. Every threshold is in seconds, not frames, so the verdict does not change — only smoothness does |

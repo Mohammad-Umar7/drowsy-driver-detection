@@ -116,7 +116,7 @@ MediaPipe pulls in Google's telemetry uploader transitively and the manifest
 merger adds a library's permissions to yours. Inspecting the built APK is what
 caught it; it's stripped with `tools:node="remove"` now.)
 
-Setup, install options and what isn't ported yet:
+Setup, install options and troubleshooting:
 [docs/05-android-app.md](docs/05-android-app.md).
 
 ### Reproduce the model from scratch
@@ -164,14 +164,14 @@ every test image is a face the model has genuinely never seen.
 | Balanced accuracy | **98.65 %** |
 | ROC-AUC | **0.9973** |
 | Average precision | 0.9979 |
-
-Those are measured **at the operating threshold the system actually ships**
-(0.342, chosen below) — not at the default 0.5, which scores 98.48 % / 98.46 %.
-Quoting accuracy at a cutoff the product doesn't use makes a whole results
-table untrustworthy, so both are printed side by side by `src.evaluate`.
 | Parameters | 139,426 |
 | Training time | 7.2 min (RTX 4070, mixed precision, early-stopped at epoch 27) |
 | Inference | ~78,000 eye crops/sec on GPU |
+
+Those accuracy figures are measured **at the operating threshold the system
+actually ships** (0.342, chosen below) — not at the default 0.5, which scores
+98.48 % / 98.46 %. Quoting accuracy at a cutoff the product doesn't use makes a
+whole results table untrustworthy, so `src.evaluate` prints both side by side.
 
 Training accuracy (98.68 %) came out *below* validation accuracy (98.85 %) —
 augmentation makes the training images harder than the clean validation ones,
