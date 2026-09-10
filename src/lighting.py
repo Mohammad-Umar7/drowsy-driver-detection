@@ -138,17 +138,37 @@ def classify(mean, face_mean, contrast, clipped_high, clipped_low) -> Light:
     return Light.NORMAL
 
 
-def auto_gamma(mean: float, target: float = TARGET_MEAN) -> float:
-    """
-    The gamma that maps `mean` onto `target`.
+# A frame anywhere in this band is already well exposed and is LEFT ALONE.
+#
+# Without this dead band, auto_gamma forced every frame to exactly TARGET_MEAN,
+# so a perfectly good bright scene at mean 183 was darkened with gamma 2.19 --
+# the clamp ceiling -- for no benefit. It also pushed such frames away from the
+# statistics the model was trained on, which is why sunlit frames measured
+# slightly WORSE with correction enabled than without it.
+#
+# Correcting only toward the nearest EDGE of the band also keeps gamma
+# continuous: at mean == COMFORT_LOW the correction is exactly 1.0, so a frame
+# hovering at the boundary cannot flicker between corrected and uncorrected.
+COMFORT_LOW = 85.0
+COMFORT_HIGH = 165.0
 
-    Derivation: we want  (mean/255) ** gamma == target/255.
-    Taking logs of both sides and rearranging gives the line below.
+
+def auto_gamma(mean: float, low: float = COMFORT_LOW,
+               high: float = COMFORT_HIGH) -> float:
+    """
+    The gamma that pulls `mean` to the nearest edge of the comfortable band,
+    or 1.0 (no change) if it is already inside.
+
+    Derivation: we want (mean/255) ** gamma == target/255, so taking logs of
+    both sides and rearranging gives the expression below.
 
     Clamped to [0.35, 2.2]. An unclamped gamma on a nearly black frame goes
     enormous and amplifies pure sensor noise into a grey blizzard.
     """
     mean = float(np.clip(mean, 4.0, 250.0))
+    if low <= mean <= high:
+        return 1.0
+    target = low if mean < low else high
     g = np.log(target / 255.0) / np.log(mean / 255.0)
     return float(np.clip(g, 0.35, 2.2))
 

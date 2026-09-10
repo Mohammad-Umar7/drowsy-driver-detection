@@ -52,9 +52,18 @@ data class LightStats(
 
 class LightingNormalizer(var enabled: Boolean = true) {
 
-    // Tuned target. Slightly below true mid-grey (128) because faces read
-    // better a touch darker than a flat grey card.
-    private val targetMean = 118.0
+    // A frame anywhere in this band is already well exposed and is LEFT ALONE.
+    //
+    // Without the dead band, gamma forced every frame to a single target, so a
+    // perfectly good bright scene at mean 183 was darkened with gamma 2.19 -
+    // the clamp ceiling - for no benefit, and pushed away from the statistics
+    // the model was trained on.
+    //
+    // Correcting only toward the nearest EDGE also keeps gamma continuous: at
+    // mean == COMFORT_LOW the correction is exactly 1.0, so a frame hovering
+    // at the boundary cannot flicker between corrected and uncorrected.
+    private val comfortLow = 85.0
+    private val comfortHigh = 165.0
     private val smooth = 0.12
 
     private var gammaNow = 1.0
@@ -85,7 +94,9 @@ class LightingNormalizer(var enabled: Boolean = true) {
      */
     private fun autoGamma(mean: Double): Double {
         val m = mean.coerceIn(4.0, 250.0)
-        val g = ln(targetMean / 255.0) / ln(m / 255.0)
+        if (m in comfortLow..comfortHigh) return 1.0
+        val target = if (m < comfortLow) comfortLow else comfortHigh
+        val g = ln(target / 255.0) / ln(m / 255.0)
         return g.coerceIn(0.35, 2.2)
     }
 
