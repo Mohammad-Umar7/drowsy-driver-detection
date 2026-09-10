@@ -2,6 +2,6 @@
   "img_size": 32,
   "input": "eye (batch,1,32,32) float32 in [0,1]",
   "output": "prob (batch,2), index 1 = P(closed)",
-  "threshold": 0.5,
-  "test_accuracy": 0.9848154029376737
+  "threshold": 0.342,
+  "test_accuracy": 0.9865025803890433
 }
