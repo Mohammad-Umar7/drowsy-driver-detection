@@ -52,6 +52,7 @@ from .config import CFG
 from .drowsiness import (DrowsinessMonitor, EarCalibrator, Level,
                          LEVEL_COLOR, LEVEL_TEXT)
 from .face import FaceTracker
+from .lighting import LightingNormalizer, LIGHT_TEXT, Light
 from .source import VideoSource
 from .model import build_model
 
@@ -88,7 +89,8 @@ def draw_bar(img, x, y, w, h, frac, color, label, warn_at=None):
                 (230, 230, 230), 1, cv2.LINE_AA)
 
 
-def draw_hud(frame, st, obs, fps, ear_thr, model_on, alarm_on, debug):
+def draw_hud(frame, st, obs, fps, ear_thr, model_on, alarm_on, debug,
+             lighting=None):
     h, w = frame.shape[:2]
     color = LEVEL_COLOR[st.level]
 
@@ -153,7 +155,7 @@ def draw_hud(frame, st, obs, fps, ear_thr, model_on, alarm_on, debug):
     # --- footer ---
     mode = "CNN+EAR" if model_on else "EAR only"
     cv2.putText(frame, f"[{mode}]  alarm {'ON' if alarm_on else 'OFF'}   "
-                       f"q quit  c calibrate  r reset  a alarm  d debug  s shot",
+                       f"q quit  c calib  r reset  a alarm  d debug  l light  s shot",
                 (12, h - 8), FONT, 0.40, (170, 170, 170), 1, cv2.LINE_AA)
 
     # --- debug: show exactly what the CNN sees ---
@@ -242,6 +244,8 @@ def main():
     ap.add_argument("--record", type=str, default=None)
     ap.add_argument("--no-model", action="store_true")
     ap.add_argument("--no-alarm", action="store_true")
+    ap.add_argument("--no-enhance", action="store_true",
+                    help="disable adaptive night/sun correction")
     # 1280x720, not 960x540. Cameras do NOT error on an unsupported resolution
     # -- they silently hand back whatever they do support. This webcam quietly
     # downgraded a 960x540 request to 640x480, which halved the eye to ~23 px
@@ -259,6 +263,9 @@ def main():
                                 cnn_weight=CFG.drowsy.fusion_cnn_weight
                                 if model is not None else 0.0)
     alarm = Alarm(enabled=not args.no_alarm)
+    # Runs BEFORE MediaPipe: in the dark there is no face to find,
+    # so enhancing only the eye crop would be too late.
+    lighting = LightingNormalizer(enabled=not args.no_enhance)
     calib = EarCalibrator()
 
     # One source type for webcam, file and phone stream. See src/source.py for
@@ -324,6 +331,8 @@ def main():
             continue
         read_fail = 0
         n_frames += 1
+
+        frame = lighting.process(frame)
         t0 = time.time()
         obs = tracker.process(frame)
 
@@ -396,7 +405,7 @@ def main():
         t_prev = loop_now
         fps = 1.0 / max(1e-6, float(np.mean(times))) if times else 0.0
         draw_hud(frame, st, obs, fps, ear_thr, model is not None,
-                 alarm.enabled, debug)
+                 alarm.enabled, debug, lighting)
 
         if calib.active:
             msg = ("CALIBRATING - keep eyes OPEN  "
@@ -422,6 +431,8 @@ def main():
             print(f"[alarm] {'on' if alarm.toggle() else 'off'}")
         elif k == ord("d"):
             debug = not debug
+        elif k == ord("l"):
+            print(f"[lighting] {'on' if lighting.toggle() else 'off'}")
         elif k == ord("s"):
             Path(CFG.paths.reports).mkdir(parents=True, exist_ok=True)
             p = Path(CFG.paths.reports) / f"shot_{int(time.time())}.png"
