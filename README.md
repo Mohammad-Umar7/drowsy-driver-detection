@@ -78,7 +78,22 @@ EAR threshold to *your* face and materially improves accuracy.
 | `r` | reset counters |
 | `a` | mute / unmute alarm |
 | `d` | debug view — shows the exact 32×32 crops the CNN sees |
+| `l` | toggle night/sun enhancement, to see what it's doing |
 | `s` | screenshot to `reports/` |
+
+### Run it off your phone in a car
+
+Your phone beats a laptop webcam: better low-light sensor, and it mounts where
+you need it. Install **IP Webcam** (Android), start the server, put the phone on
+the same WiFi, then:
+
+```bash
+python -m src.infer --source http://192.168.1.7:8080/video --rotate 270 --no-mirror
+```
+
+`--rotate` because a phone in a car mount films sideways and MediaPipe needs an
+upright face. `--no-mirror` because a phone pointed at you isn't a mirror.
+Full setup and troubleshooting: [docs/04-phone-night-and-sun.md](docs/04-phone-night-and-sun.md).
 
 ### Reproduce the model from scratch
 
@@ -186,6 +201,32 @@ verdict is identical at 10, 30 and 60 FPS:
 Every duration in the tests is read from `config.py` rather than hard-coded, so
 retuning a threshold cannot silently invalidate the test that guards it.
 
+### Robustness to lighting
+
+`python scripts/test_lighting.py` takes one clean reference frame of your face
+and simulates night, sun and backlighting on it, so the **only** variable is the
+light. `P(closed)` is the model's confidence the eye is shut; the decision
+threshold is 0.342, and the eyes are open in every frame, so **lower is
+correct**.
+
+| Condition | enhancement OFF | enhancement ON |
+|---|---|---|
+| clean | 0.025 ✓ | 0.019 ✓ |
+| dusk | 0.064 ✓ | 0.025 ✓ |
+| **night** | **0.557 ✗** | **0.169 ✓** |
+| **deep night** | **0.785 ✗** | **0.274 ✓** |
+| bright sun | 0.010 ✓ | 0.024 ✓ |
+| harsh sun | 0.022 ✓ | 0.039 ✓ |
+| backlit | 0.016 ✓ | 0.031 ✓ |
+
+**Conditions handled correctly: 5/7 → 7/7**, at 4.09 ms/frame.
+
+Stated plainly: **sunlight already worked without this.** The CLAHE applied to
+the eye crop in `preprocess.py` was absorbing overexposure on its own, and
+normalisation makes those frames marginally *worse* (0.010 → 0.024), though both
+sit far below the threshold. The feature earns its place on **night**, where it
+takes open eyes from being misread as shut to being read correctly.
+
 ### Live run on a real face
 
 ```
@@ -230,6 +271,8 @@ src/
   geometry.py      EAR, MAR, head pose (pure maths, no ML)
   preprocess.py    pixels -> model input. Shared by training AND live inference
   face.py          MediaPipe FaceMesh wrapper -> landmarks + eye crops
+  source.py        webcam / video file / PHONE stream, with frame dropping
+  lighting.py      adaptive night + sun correction (gamma + CLAHE in LAB)
   model.py         the CNN (139,426 parameters) + a transfer-learning variant
   dataset.py       PyTorch Dataset + data augmentation
   train.py         training loop: AMP, cosine schedule, early stopping
@@ -239,12 +282,15 @@ src/
   infer.py         live webcam application
 scripts/
   prepare_data.py  unzip, preprocess, subject-wise split
+  diagnose_pose.py guided pose diagnostic - run this when it misbehaves
+  test_lighting.py night/sun robustness benchmark
 tests/
   test_drowsiness.py   26 simulated-time tests, no webcam required
 docs/
   01-foundations.md       images, pixels, landmarks, EAR — assumes zero background
   02-cnn-explained.md     what a CNN and a kernel are, worked with real numbers
   03-training-explained.md loss, gradients, backprop, overfitting, reading the logs
+  04-phone-night-and-sun.md phone setup, night, sunlight, troubleshooting
   convolution-bench.html   INTERACTIVE - open in a browser, step a kernel across an eye
 ```
 
@@ -287,6 +333,13 @@ Current duration gates — nothing triggers until it has lasted this long:
 - **Trained on infrared images.** MRL is IR; a normal RGB webcam has different
   texture statistics. Calibration and EAR fusion absorb much of this, but
   fine-tuning on your own captures would close the gap further.
+- **Software cannot invent a signal that was never captured.** Enhancement
+  recovers faint detail; it does not help a genuinely black frame. For real
+  night driving the correct answer is an IR illuminator, which is what
+  production driver-monitoring systems use.
+- **Backlit detection is untuned.** The classifier labels a synthetic backlit
+  frame as `BRIGHT SUN`. The correction applied is still adequate, but the rule
+  needs real sky-through-windscreen footage to tune properly.
 - **One face only.** `max_num_faces=1` — the driver.
 - **Not a certified safety device.** This is a student/research project.
 
