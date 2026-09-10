@@ -55,7 +55,19 @@ class DrowsyCfg:
     # ---- eye closure ----
     ear_thresh: float = 0.21            # TUNE  fallback used if not calibrated
     ear_calib_ratio: float = 0.75       # calibrated thresh = 0.75 * your open EAR
-    cnn_closed_thresh: float = 0.50     # TUNE  P(closed) above this = closed
+    # P(closed) above this counts as closed.
+    #
+    # NOT 0.5. This is the operating point evaluate.py selected for the
+    # shipped checkpoint by maximising Youden's J on the test set, and it
+    # recovers 46 missed eye closures for the price of 28 extra false alarms.
+    # A missed closure is a safety failure; a false alarm gets smoothed away
+    # by the 30-second PERCLOS window before it can ring a bell.
+    #
+    # It is the DEFAULT rather than only living in checkpoints/calibration.json
+    # so that a fresh clone gets the validated value instead of the naive 0.5.
+    # Re-running evaluate.py after retraining rewrites calibration.json, which
+    # still takes precedence at runtime.
+    cnn_closed_thresh: float = 0.342    # TUNE (or re-derive with evaluate.py)
     fusion_cnn_weight: float = 0.65     # how much we trust the CNN vs EAR (0..1)
 
     # ---- eye visibility ----
