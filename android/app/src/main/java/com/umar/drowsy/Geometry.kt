@@ -9,7 +9,6 @@ import org.opencv.core.MatOfPoint2f
 import org.opencv.core.MatOfPoint3f
 import org.opencv.core.Point
 import org.opencv.core.Point3
-import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -173,6 +172,4 @@ object Geometry {
             Math.round(cx + half).toInt(), Math.round(cy + half).toInt()
         )
     }
-
-    fun clampAngle(v: Double) = abs(v)
 }

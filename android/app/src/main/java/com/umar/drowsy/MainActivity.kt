@@ -3,7 +3,6 @@ package com.umar.drowsy
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.graphics.RectF
 import android.os.Bundle
 import android.util.Log
@@ -23,7 +22,9 @@ import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker
 import com.umar.drowsy.databinding.ActivityMainBinding
 import org.opencv.android.OpenCVLoader
 import org.opencv.android.Utils
+import org.opencv.core.Core
 import org.opencv.core.Mat
+import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -56,8 +57,21 @@ class MainActivity : AppCompatActivity() {
     private val frameTimes = ArrayDeque<Double>()
     private var lastFrameT = 0.0
 
-    private val rgbaMat = Mat()
+    private val lighting = LightingNormalizer()
+
+    // Allocated once and reused. Creating a Bitmap or Mat inside a 30 fps loop
+    // churns megabytes per second and hands the garbage collector work inside
+    // the frame budget, which is what makes camera apps stutter.
+    private val rawMat = Mat()
+    private val uprightMat = Mat()
     private val grayMat = Mat()
+    private var rawBitmap: Bitmap? = null
+    private var uprightBitmap: Bitmap? = null
+
+    // MediaPipe's VIDEO mode requires STRICTLY increasing timestamps. Two
+    // frames can land in the same millisecond on a fast device, and passing
+    // the same value twice throws.
+    private var lastStampMs = 0L
 
     private val permission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -168,12 +182,29 @@ class MainActivity : AppCompatActivity() {
     private fun onFrame(proxy: ImageProxy) {
         val now = System.nanoTime() / 1e9
         try {
-            val bmp = proxy.toUprightBitmap() ?: return
-            val w = bmp.width
-            val h = bmp.height
+            // RGBA frame -> upright Mat, enhanced, then handed to MediaPipe.
+            if (!proxy.intoUprightMat(uprightMat)) return
+            val w = uprightMat.cols()
+            val h = uprightMat.rows()
+
+            // Lighting correction runs FIRST, on the whole frame. Enhancing
+            // only the eye crop would be too late: in the dark MediaPipe finds
+            // no face, so there is no crop to enhance.
+            lighting.process(uprightMat)
+
+            var bmp = uprightBitmap
+            if (bmp == null || bmp.width != w || bmp.height != h) {
+                bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                uprightBitmap = bmp
+            }
+            Utils.matToBitmap(uprightMat, bmp)
+
+            var stamp = (now * 1000).toLong()
+            if (stamp <= lastStampMs) stamp = lastStampMs + 1
+            lastStampMs = stamp
 
             val result = landmarker?.detectForVideo(
-                BitmapImageBuilder(bmp).build(), (now * 1000).toLong()
+                BitmapImageBuilder(bmp).build(), stamp
             )
             val faces = result?.faceLandmarks()
             val found = !faces.isNullOrEmpty()
@@ -218,8 +249,9 @@ class MainActivity : AppCompatActivity() {
                 val boxL = Geometry.squareBox(pts, Geometry.LEFT_EYE_CONTOUR, 1.35)
                 val boxR = Geometry.squareBox(pts, Geometry.RIGHT_EYE_CONTOUR, 1.35)
 
-                Utils.bitmapToMat(bmp, rgbaMat)
-                Imgproc.cvtColor(rgbaMat, grayMat, Imgproc.COLOR_RGBA2GRAY)
+                // Grayscale comes from the ENHANCED frame, matching the desktop
+                // order where preprocess runs after lighting correction.
+                Imgproc.cvtColor(uprightMat, grayMat, Imgproc.COLOR_RGBA2GRAY)
                 classifier?.let { c ->
                     val p = c.classify(grayMat, boxL, boxR)
                     val usable = mutableListOf<Double>()
@@ -284,31 +316,61 @@ class MainActivity : AppCompatActivity() {
         val scale = max(vw / iw, vh / ih)
         val dx = (vw - iw * scale) / 2f
         val dy = (vh - ih * scale) / 2f
-        return RectF(b[0] * scale + dx, b[1] * scale + dy,
-                     b[2] * scale + dx, b[3] * scale + dy)
+
+        var left = b[0] * scale + dx
+        var right = b[2] * scale + dx
+
+        // PreviewView MIRRORS the front camera for display, because a selfie
+        // view that moves the wrong way feels broken. ImageAnalysis frames are
+        // NOT mirrored. Without correcting for that here, every box lands on
+        // the opposite side of the face from the eye it belongs to.
+        if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
+            val l = vw - right
+            right = vw - left
+            left = l
+        }
+        return RectF(left, b[1] * scale + dy, right, b[3] * scale + dy)
     }
 
     /**
-     * RGBA frame -> upright Bitmap.
+     * RGBA frame -> upright Mat, reusing buffers.
      *
      * The sensor is mounted rotated relative to the screen, so frames arrive
      * rotated by rotationDegrees. MediaPipe needs an UPRIGHT face - a sideways
      * one is simply not detected - so this must happen before anything else.
+     *
+     * Rotation is done with OpenCV on the Mat rather than with a Bitmap
+     * Matrix. Bitmap.createBitmap allocates a fresh bitmap every call, and at
+     * 30 fps on a 720p frame that is tens of megabytes a second of garbage.
+     * Core.rotate writes into a Mat we already own.
+     *
+     * The row stride is handled explicitly: it is frequently WIDER than the
+     * image, and copying it as if it were not skews every row into a diagonal
+     * smear.
      */
-    private fun ImageProxy.toUprightBitmap(): Bitmap? {
-        val plane = planes.firstOrNull() ?: return null
-        val bmp = Bitmap.createBitmap(
-            width + (plane.rowStride - plane.pixelStride * width) / plane.pixelStride,
-            height, Bitmap.Config.ARGB_8888
-        )
-        bmp.copyPixelsFromBuffer(plane.buffer)
-        val cropped = if (bmp.width != width)
-            Bitmap.createBitmap(bmp, 0, 0, width, height) else bmp
+    private fun ImageProxy.intoUprightMat(dst: Mat): Boolean {
+        val plane = planes.firstOrNull() ?: return false
+        val padded = width +
+            (plane.rowStride - plane.pixelStride * width) / plane.pixelStride
 
-        val deg = imageInfo.rotationDegrees
-        if (deg == 0) return cropped
-        val m = Matrix().apply { postRotate(deg.toFloat()) }
-        return Bitmap.createBitmap(cropped, 0, 0, cropped.width, cropped.height, m, true)
+        var bmp = rawBitmap
+        if (bmp == null || bmp.width != padded || bmp.height != height) {
+            bmp = Bitmap.createBitmap(padded, height, Bitmap.Config.ARGB_8888)
+            rawBitmap = bmp
+        }
+        plane.buffer.rewind()
+        bmp.copyPixelsFromBuffer(plane.buffer)
+        Utils.bitmapToMat(bmp, rawMat)
+
+        val src = if (padded != width) Mat(rawMat, Rect(0, 0, width, height)) else rawMat
+        when (imageInfo.rotationDegrees) {
+            90 -> Core.rotate(src, dst, Core.ROTATE_90_CLOCKWISE)
+            180 -> Core.rotate(src, dst, Core.ROTATE_180)
+            270 -> Core.rotate(src, dst, Core.ROTATE_90_COUNTERCLOCKWISE)
+            else -> src.copyTo(dst)
+        }
+        if (src !== rawMat) src.release()
+        return !dst.empty()
     }
 
     override fun onDestroy() {
@@ -317,7 +379,8 @@ class MainActivity : AppCompatActivity() {
         landmarker?.close()
         classifier?.close()
         alarm?.release()
-        rgbaMat.release(); grayMat.release()
+        rawMat.release(); uprightMat.release(); grayMat.release()
+        lighting.release()
     }
 
     companion object { private const val TAG = "Drowsy" }

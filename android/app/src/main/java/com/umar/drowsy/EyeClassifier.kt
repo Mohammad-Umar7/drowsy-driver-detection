@@ -52,6 +52,8 @@ class EyeClassifier(context: Context) {
     private val buffer: FloatBuffer = FloatBuffer.allocate(2 * size * size)
     private val gray32 = Mat()
     private val work = Mat()
+    private val scratch = FloatArray(size * size)
+    private val flat = FloatArray(2 * size * size)
 
     init {
         val bytes = context.assets.open("eyenet.onnx").use { it.readBytes() }
@@ -99,9 +101,8 @@ class EyeClassifier(context: Context) {
         clahe.apply(work, work)
         // 4. to [0,1]
         work.convertTo(gray32, CvType.CV_32F, 1.0 / 255.0)
-        val tmp = FloatArray(size * size)
-        gray32.get(0, 0, tmp)
-        System.arraycopy(tmp, 0, dst, offset, tmp.size)
+        gray32.get(0, 0, scratch)
+        System.arraycopy(scratch, 0, dst, offset, scratch.size)
         crop.release()
     }
 
@@ -110,12 +111,11 @@ class EyeClassifier(context: Context) {
      *         softmax, so these are probabilities, not logits.
      */
     fun classify(grayFrame: Mat, boxLeft: IntArray, boxRight: IntArray): DoubleArray {
-        val data = FloatArray(2 * size * size)
-        preprocessInto(grayFrame, boxLeft, data, 0)
-        preprocessInto(grayFrame, boxRight, data, size * size)
+        preprocessInto(grayFrame, boxLeft, flat, 0)
+        preprocessInto(grayFrame, boxRight, flat, size * size)
 
         buffer.rewind()
-        buffer.put(data)
+        buffer.put(flat)
         buffer.rewind()
 
         // Both eyes go through as ONE batch of 2. Two separate calls would pay
