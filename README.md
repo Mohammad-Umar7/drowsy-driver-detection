@@ -95,6 +95,30 @@ python -m src.infer --source http://192.168.1.7:8080/video --rotate 270 --no-mir
 upright face. `--no-mirror` because a phone pointed at you isn't a mirror.
 Full setup and troubleshooting: [docs/04-phone-night-and-sun.md](docs/04-phone-night-and-sun.md).
 
+### Run it on your phone — no PC, no WiFi
+
+There's a full native Android app in [`android/`](android/). The same pipeline,
+the same model, running entirely on the phone.
+
+```bash
+cd android
+./gradlew assembleDebug
+adb install -r app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+```
+
+The built APK requests exactly two permissions — `CAMERA` and `VIBRATE`. There
+is **no `INTERNET` permission**, so the operating system itself refuses any
+socket the app opens. "Runs entirely on device" is enforced by Android rather
+than asserted here.
+
+(The first build *did* have `INTERNET`. Nothing in this codebase asked for it —
+MediaPipe pulls in Google's telemetry uploader transitively and the manifest
+merger adds a library's permissions to yours. Inspecting the built APK is what
+caught it; it's stripped with `tools:node="remove"` now.)
+
+Setup, install options and what isn't ported yet:
+[docs/05-android-app.md](docs/05-android-app.md).
+
 ### Reproduce the model from scratch
 
 ```bash
@@ -284,13 +308,15 @@ scripts/
   prepare_data.py  unzip, preprocess, subject-wise split
   diagnose_pose.py guided pose diagnostic - run this when it misbehaves
   test_lighting.py night/sun robustness benchmark
+  export_onnx.py   PyTorch -> ONNX for the phone, with parity verification
 tests/
   test_drowsiness.py   26 simulated-time tests, no webcam required
 docs/
   01-foundations.md       images, pixels, landmarks, EAR — assumes zero background
   02-cnn-explained.md     what a CNN and a kernel are, worked with real numbers
   03-training-explained.md loss, gradients, backprop, overfitting, reading the logs
-  04-phone-night-and-sun.md phone setup, night, sunlight, troubleshooting
+  04-phone-night-and-sun.md phone-as-webcam, night, sunlight, troubleshooting
+  05-android-app.md       the native app: install, permissions, gaps
   convolution-bench.html   INTERACTIVE - open in a browser, step a kernel across an eye
 ```
 
