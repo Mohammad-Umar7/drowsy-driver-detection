@@ -72,10 +72,34 @@ class EyeDataset(Dataset):
 
         self.X = np.load(xp)                       # (N, S, S) uint8
         self.y = np.load(yp).astype(np.int64)      # (N,)  0=open 1=closed
-        self.rng = np.random.default_rng(seed)
+
+        # The generator is created lazily, per worker process.
+        #
+        # WHY: a DataLoader with num_workers>0 FORKS this object, so every
+        # worker inherits an identical Generator in an identical state. All
+        # four workers would then produce the SAME sequence of random
+        # augmentations, quartering the augmentation diversity the model
+        # actually sees while appearing to work perfectly.
+        #
+        # We force num_workers=0 on Windows so this never bites there, but it
+        # would bite silently on Linux. Re-seeding when the pid changes fixes
+        # it wherever it runs.
+        self._seed = seed
+        self._rng = None
+        self._rng_pid = None
 
     def __len__(self) -> int:
         return len(self.y)
+
+    @property
+    def rng(self) -> np.random.Generator:
+        pid = os.getpid()
+        if self._rng is None or self._rng_pid != pid:
+            # Mix the pid in so each worker gets a distinct stream, while a
+            # single-process run stays reproducible for a given seed.
+            self._rng = np.random.default_rng([self._seed, pid])
+            self._rng_pid = pid
+        return self._rng
 
     # -- the augmentation pipeline ------------------------------------------
     def _augment(self, img: np.ndarray) -> np.ndarray:
@@ -85,7 +109,9 @@ class EyeDataset(Dataset):
         # 1. Horizontal flip (50%). A left eye mirrored looks like a right eye,
         #    so this genuinely doubles our effective dataset for free.
         if r.random() < 0.5:
-            img = img[:, ::-1]
+            # ascontiguousarray because [:, ::-1] yields a NEGATIVE stride, and
+            # several OpenCV functions reject that outright.
+            img = np.ascontiguousarray(img[:, ::-1])
 
         # 2. Small affine jitter: rotate +/-12 deg, scale +/-10%, shift +/-10%.
         #    Our eye crop comes from landmarks that jitter slightly frame to
