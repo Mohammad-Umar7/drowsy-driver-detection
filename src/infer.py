@@ -330,23 +330,48 @@ def main():
     n_frames = n_faces = n_alarms = 0
     max_perclos = 0.0
     peak_level = Level.AWAKE
-    read_fail = 0
+    lost_since = None
+    last_frame = None
 
     while True:
-        ok, frame = cap.read()
+        # A SHORT wait, deliberately. read() blocks until a genuinely new frame
+        # arrives, so a long timeout means the whole loop stalls -- and while
+        # it is stalled cv2.waitKey is never called, so the window stops
+        # repainting and 'q' does nothing. With the old 2 s wait and a 60-fail
+        # budget, a dropped phone stream froze the app for two minutes with no
+        # way to quit it.
+        ok, frame = cap.read(wait=0.25)
         if not ok:
-            # One dropped frame is normal (USB hiccup). Only give up if the
-            # camera stops delivering entirely.
-            read_fail += 1
-            if read_fail > 60:
-                print("[error] camera stopped delivering frames")
+            if lost_since is None:
+                lost_since = time.time()
+            gone = time.time() - lost_since
+
+            # Keep the UI alive while reconnecting: show the last good frame
+            # under a banner, and keep honouring keystrokes.
+            if last_frame is not None:
+                shown = last_frame.copy()
+                draw_panel(shown, 0, 0, shown.shape[1], 62)
+                cv2.putText(shown, "SIGNAL LOST", (14, 44), FONT, 1.25,
+                            (0, 165, 255), 3, cv2.LINE_AA)
+                cv2.putText(shown, f"reconnecting... {gone:.0f}s",
+                            (shown.shape[1] - 250, 40), FONT, 0.6,
+                            (215, 215, 215), 1, cv2.LINE_AA)
+                cv2.imshow(WIN, shown)
+            if (cv2.waitKey(1) & 0xFF) in (ord("q"), 27):
+                break
+            # Give up on elapsed TIME, not on a raw retry count: the number of
+            # retries depends on the timeout, so counting them measured
+            # nothing meaningful.
+            if gone > 30.0:
+                print(f"[error] no frames for {gone:.0f}s - giving up")
                 break
             continue
-        read_fail = 0
+
+        lost_since = None
+        last_frame = frame
         n_frames += 1
 
         frame = lighting.process(frame)
-        t0 = time.time()
         obs = tracker.process(frame)
 
         closed_prob = None
