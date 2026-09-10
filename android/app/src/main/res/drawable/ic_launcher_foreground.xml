@@ -1,0 +1,9 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- an open eye: outer almond, iris, pupil highlight -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M54,34c-14,0 -25.5,8.4 -31,20c5.5,11.6 17,20 31,20s25.5,-8.4 31,-20C79.5,42.4 68,34 54,34zM54,68c-7.7,0 -14,-6.3 -14,-14s6.3,-14 14,-14s14,6.3 14,14S61.7,68 54,68z"/>
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M54,46c-4.4,0 -8,3.6 -8,8s3.6,8 8,8s8,-3.6 8,-8S58.4,46 54,46z"/>
+</vector>

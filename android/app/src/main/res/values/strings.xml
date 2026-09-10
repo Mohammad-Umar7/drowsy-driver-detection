@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Drowsy Driver</string>
+    <string name="camera_needed">Camera permission is required to watch for drowsiness.</string>
+</resources>
