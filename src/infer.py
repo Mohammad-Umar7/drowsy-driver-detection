@@ -1,10 +1,19 @@
 """
 Live webcam drowsiness detector -- the demo you actually show people.
 
-    python -m src.infer                     # webcam, trained model
+    python -m src.infer                     # built-in webcam
     python -m src.infer --no-model          # geometry only (EAR), no CNN
-    python -m src.infer --video clip.mp4    # run on a recorded file
+    python -m src.infer --source clip.mp4   # run on a recorded file
     python -m src.infer --record out.mp4    # save what you see
+
+    # PHONE AS A DASHCAM (same WiFi as the PC):
+    #   1. install "IP Webcam" (Android) or "DroidCam"
+    #   2. start the server in the app, note the URL it shows
+    #   3. mount the phone facing the driver, then:
+    python -m src.infer --source http://192.168.1.7:8080/video \
+                        --rotate 270 --no-mirror
+    # --rotate: a phone in a car mount is sideways; MediaPipe needs it upright
+    # --no-mirror: a phone pointed at you is not a mirror, unlike a webcam
 
 Keys:
     q / ESC   quit
@@ -43,6 +52,7 @@ from .config import CFG
 from .drowsiness import (DrowsinessMonitor, EarCalibrator, Level,
                          LEVEL_COLOR, LEVEL_TEXT)
 from .face import FaceTracker
+from .source import VideoSource
 from .model import build_model
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -214,8 +224,21 @@ def save_calibration(**kw):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--camera", type=int, default=0)
-    ap.add_argument("--video", type=str, default=None)
+    # --source takes anything: a device index, a file, or a phone URL.
+    #   0                                  built-in webcam
+    #   http://192.168.1.7:8080/video      Android "IP Webcam" app
+    #   http://192.168.1.7:4747/video      DroidCam
+    #   drive.mp4                          recorded clip
+    ap.add_argument("--source", type=str, default=None,
+                    help="camera index, video file, or phone stream URL")
+    ap.add_argument("--camera", type=int, default=0)          # legacy alias
+    ap.add_argument("--video", type=str, default=None)        # legacy alias
+    ap.add_argument("--rotate", type=int, default=0, choices=[0, 90, 180, 270],
+                    help="rotate frames - a phone in a car mount is sideways")
+    ap.add_argument("--mirror", action="store_true",
+                    help="force mirroring on")
+    ap.add_argument("--no-mirror", action="store_true",
+                    help="force mirroring off (correct for a phone facing you)")
     ap.add_argument("--record", type=str, default=None)
     ap.add_argument("--no-model", action="store_true")
     ap.add_argument("--no-alarm", action="store_true")
@@ -238,31 +261,24 @@ def main():
     alarm = Alarm(enabled=not args.no_alarm)
     calib = EarCalibrator()
 
-    if args.video:
-        cap = cv2.VideoCapture(args.video)
-    else:
-        # CAP_DSHOW is the DirectShow backend. On Windows the default MSMF
-        # backend often takes several seconds to open a webcam; DSHOW is
-        # near-instant. On other platforms this flag is simply ignored.
-        cap = cv2.VideoCapture(args.camera, cv2.CAP_DSHOW)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
-        got_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        got_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        if (got_w, got_h) != (args.width, args.height):
-            print(f"[warn] asked for {args.width}x{args.height}, camera gave "
-                  f"{got_w}x{got_h}. Eye crops will be smaller, which hurts "
-                  f"accuracy. Try --width/--height with a supported mode.")
-        else:
-            print(f"[ok] capture {got_w}x{got_h}")
-    if not cap.isOpened():
-        raise SystemExit("could not open video source")
+    # One source type for webcam, file and phone stream. See src/source.py for
+    # why a network stream needs its own frame-dropping reader.
+    source = args.source if args.source is not None else (
+        args.video if args.video else args.camera)
+    mirror = True if args.mirror else (False if args.no_mirror else None)
+    cap = VideoSource(source, args.width, args.height, rotate=args.rotate,
+                      mirror=mirror)
+    if not cap.opened:
+        raise SystemExit(
+            f"could not open video source {source!r}\n"
+            f"  phone: install 'IP Webcam' (Android), start the server, then\n"
+            f"         python -m src.infer --source http://<phone-ip>:8080/video")
+    print(f"[ok] source: {cap.describe()}")
 
     writer = None
     if args.record:
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        w, h = cap.size
         writer = cv2.VideoWriter(args.record, fourcc, 20.0, (w, h))
 
     # FPS over a rolling window of 30 frames -- a single-frame estimate is far
@@ -308,10 +324,6 @@ def main():
             continue
         read_fail = 0
         n_frames += 1
-        # Mirror the webcam so moving right moves you right on screen.
-        if not args.video:
-            frame = cv2.flip(frame, 1)
-
         t0 = time.time()
         obs = tracker.process(frame)
 
