@@ -56,6 +56,20 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    splits {
+        // One universal APK carrying both architectures is ~105 MB, because
+        // OpenCV, ONNX Runtime and MediaPipe each ship a large .so per ABI.
+        // Splitting produces a per-architecture APK roughly half that size,
+        // while still emitting the universal one for anyone unsure which
+        // their phone needs.
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = true
+        }
+    }
 }
 
 dependencies {

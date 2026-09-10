@@ -1,10 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- The only permission this app needs. There is deliberately NO INTERNET
-         permission: everything runs on the device, so the app is incapable of
-         sending your camera anywhere even if it wanted to. -->
+    <!-- The only permission this app actually needs. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!--
+        MediaPipe pulls in com.google.android.datatransport transitively -
+        Google's telemetry uploader - and its manifest declares INTERNET and
+        ACCESS_NETWORK_STATE. Manifest merging then adds them to OUR app, so
+        the built APK requested network access that nothing in this codebase
+        wants or uses.
+
+        tools:node="remove" strips them back out at merge time. That is not
+        cosmetic: without the INTERNET permission the OS itself refuses any
+        socket this process opens, so "everything runs on device" becomes a
+        guarantee enforced by Android rather than a promise in a README.
+
+        The library is kept rather than excluded from the dependency graph,
+        because removing classes MediaPipe may reference could fail at runtime
+        with NoClassDefFoundError. Denying the permission is the safer of the
+        two: any upload it attempts simply fails inside its own retry logic.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
 
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
@@ -12,6 +32,7 @@
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Drowsy">

@@ -130,10 +130,15 @@ object Geometry {
 
         val rot = Mat()
         Calib3d.Rodrigues(rvec, rot)
-        val angles = Calib3d.RQDecomp3x3(rot, Mat(), Mat())
-        val out = doubleArrayOf(wrap(angles.`val`[0]), wrap(angles.`val`[1]),
-            wrap(angles.`val`[2]))
-        listOf(image, model, cam, dist, rvec, tvec, rot).forEach { it.release() }
+        // OpenCV's Java binding returns the Euler angles as a plain double[]
+        // (degrees, x/y/z) -- not a Scalar. mtxR and mtxQ are required output
+        // arguments even though we only want the angles.
+        val mtxR = Mat()
+        val mtxQ = Mat()
+        val angles = Calib3d.RQDecomp3x3(rot, mtxR, mtxQ)
+        val out = doubleArrayOf(wrap(angles[0]), wrap(angles[1]), wrap(angles[2]))
+        listOf(image, model, cam, dist, rvec, tvec, rot, mtxR, mtxQ)
+            .forEach { it.release() }
         return out
     }
 
