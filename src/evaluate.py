@@ -48,7 +48,8 @@ import numpy as np
 import torch
 from sklearn.metrics import (confusion_matrix, classification_report,
                              roc_curve, precision_recall_curve,
-                             roc_auc_score, average_precision_score)
+                             roc_auc_score, average_precision_score,
+                             balanced_accuracy_score)
 
 from .config import CFG
 from .dataset import EyeDataset
@@ -216,7 +217,23 @@ def main():
     chosen = thr_j
     cm = confusion_matrix(y, p >= chosen, labels=[0, 1])
     tn, fp, fn, tp = cm.ravel()
+
+    # Report accuracy AT THE THRESHOLD WE ACTUALLY SHIP.
+    #
+    # The headline figures above are computed at 0.5, which is what
+    # evaluate_split defaults to - but 0.5 is not the cutoff this system runs
+    # at. Quoting accuracy at a threshold the product does not use is the kind
+    # of small dishonesty that makes a whole results table untrustworthy, even
+    # when (as here) the real number is BETTER.
+    pred_chosen = (p >= chosen).astype(int)
+    acc_chosen = float((pred_chosen == y).mean())
+    bal_chosen = float(balanced_accuracy_score(y, pred_chosen))
+
     print(f"\nchosen operating threshold: {chosen:.3f}")
+    print(f"  accuracy at this threshold      : {acc_chosen*100:.2f}%  "
+          f"(vs {res['acc']*100:.2f}% at the default 0.5)")
+    print(f"  balanced accuracy at this thresh: {bal_chosen*100:.2f}%  "
+          f"(vs {res['bal_acc']*100:.2f}% at 0.5)")
     print(f"  missed closed eyes (dangerous): {fn:,} / {tp+fn:,} "
           f"({100*fn/max(1,tp+fn):.2f}%)")
     print(f"  false alarms (annoying)       : {fp:,} / {tn+fp:,} "
@@ -238,8 +255,12 @@ def main():
     plot_history(reports / "history.json", reports / "training_curves.png")
 
     (reports / "metrics.json").write_text(json.dumps({
-        "n_test": int(len(y)), "accuracy": res["acc"],
-        "balanced_accuracy": res["bal_acc"], "roc_auc": res["auc"],
+        "n_test": int(len(y)),
+        "accuracy_at_0.5": res["acc"],
+        "balanced_accuracy_at_0.5": res["bal_acc"],
+        "accuracy_at_chosen": acc_chosen,
+        "balanced_accuracy_at_chosen": bal_chosen,
+        "roc_auc": res["auc"],
         "average_precision": float(average_precision_score(y, p)),
         "thresholds": {"default": 0.5, "youden_j": thr_j,
                        "recall98": thr_recall98, "chosen": chosen},
