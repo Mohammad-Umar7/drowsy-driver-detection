@@ -3,7 +3,6 @@ package com.umar.drowsy
 import org.opencv.core.Core
 import org.opencv.core.CvType
 import org.opencv.core.Mat
-import org.opencv.core.MatOfInt
 import org.opencv.core.Rect
 import org.opencv.core.Size
 import org.opencv.imgproc.CLAHE
@@ -73,6 +72,8 @@ class LightingNormalizer(var enabled: Boolean = true) {
     private val lut = Mat(1, 256, CvType.CV_8U)
     private val lutData = ByteArray(256)
     private val channels = ArrayList<Mat>(3)
+    private val smallBuf = ByteArray(160 * 90)
+    private val hist = IntArray(256)
 
     /**
      * The gamma that maps `mean` onto the target.
@@ -119,7 +120,34 @@ class LightingNormalizer(var enabled: Boolean = true) {
         // shape, not precision, and doing this at full resolution every frame
         // is wasted work.
         Imgproc.resize(l, small, Size(160.0, 90.0), 0.0, 0.0, Imgproc.INTER_AREA)
-        val mean = Core.mean(small).`val`[0]
+
+        // One histogram pass yields mean, the 5th/95th percentiles and the
+        // clipped fraction together. Cheaper than three separate OpenCV calls
+        // over the same 14,400 pixels, and it is the only way to get
+        // percentiles, which OpenCV does not expose directly.
+        small.get(0, 0, smallBuf)
+        java.util.Arrays.fill(hist, 0)
+        for (b in smallBuf) hist[b.toInt() and 0xFF]++
+        val total = smallBuf.size
+
+        var sum = 0L
+        for (i in 0..255) sum += i.toLong() * hist[i]
+        val mean = sum.toDouble() / total
+
+        var cum = 0
+        var p5 = 0
+        var p95 = 255
+        val loTarget = (total * 0.05).toInt()
+        val hiTarget = (total * 0.95).toInt()
+        for (i in 0..255) { cum += hist[i]; if (cum >= loTarget) { p5 = i; break } }
+        cum = 0
+        for (i in 0..255) { cum += hist[i]; if (cum >= hiTarget) { p95 = i; break } }
+        // How much of the available range the image actually uses.
+        val contrast = (p95 - p5).toDouble()
+
+        var hiCount = 0
+        for (i in 250..255) hiCount += hist[i]
+        val hiFrac = hiCount.toDouble() / total
 
         // Centre crop approximates "how bright is the face" without running a
         // detector - in a driver-facing camera the face is near the middle.
@@ -127,8 +155,7 @@ class LightingNormalizer(var enabled: Boolean = true) {
         val faceMean = Core.mean(face).`val`[0]
         face.release()
 
-        val hiFrac = countAbove(small, 250.0)
-        val cond = classify(mean, faceMean, hiFrac)
+        val cond = classify(mean, faceMean, contrast, hiFrac)
 
         if (!enabled) {
             stats = LightStats(cond, mean, faceMean, 1.0)
@@ -171,24 +198,19 @@ class LightingNormalizer(var enabled: Boolean = true) {
         return rgba
     }
 
-    /** Fraction of pixels at or near saturation - where detail is destroyed. */
-    private fun countAbove(m: Mat, thr: Double): Double {
-        val mask = Mat()
-        Imgproc.threshold(m, mask, thr, 255.0, Imgproc.THRESH_BINARY)
-        val n = Core.countNonZero(mask)
-        val total = m.rows() * m.cols()
-        mask.release()
-        return if (total == 0) 0.0 else n.toDouble() / total
-    }
-
     /**
      * Order matters. BACKLIT is checked FIRST because it defeats every simpler
      * test: the frame mean can look entirely normal while the face sits in
      * deep shadow. Only comparing the centre against the whole frame catches it.
      */
-    private fun classify(mean: Double, faceMean: Double, hiFrac: Double): Light = when {
+    private fun classify(
+        mean: Double, faceMean: Double, contrast: Double, hiFrac: Double
+    ): Light = when {
         hiFrac > 0.12 && faceMean < mean - 25 -> Light.BACKLIT
-        mean < 45 || faceMean < 40 -> Light.DARK
+        // The contrast term matters: without it a normally-lit frame whose
+        // CENTRE happens to be dark - dark clothing, a beard, a shadow - is
+        // misread as night and gets median-blurred for no reason.
+        mean < 45 || (faceMean < 40 && contrast < 60) -> Light.DARK
         mean < 80 -> Light.DIM
         mean > 185 || hiFrac > 0.28 -> Light.BRIGHT
         else -> Light.NORMAL
