@@ -24,3 +24,12 @@ env/
 Thumbs.db
 .vscode/
 .idea/
+
+# android
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/.idea/
+*.apk
+*.aab
