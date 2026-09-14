@@ -198,12 +198,12 @@ def main():
     Path(CFG.paths.reports).mkdir(parents=True, exist_ok=True)
 
     history, best_score, best_epoch, patience = [], -1.0, -1, 0
-    t_start = time.time()
+    t_start = time.monotonic()
 
     for epoch in range(1, args.epochs + 1):
         model.train()          # Dropout ON, BatchNorm uses batch statistics
         run_loss, run_correct, run_n = 0.0, 0, 0
-        t0 = time.time()
+        t0 = time.monotonic()
 
         for x, y in train_dl:
             x = x.to(device, non_blocking=True)
@@ -241,7 +241,7 @@ def main():
         tr_acc = run_correct / run_n
         va = evaluate_split(model, val_dl, device, criterion)
         lr_now = optimizer.param_groups[0]["lr"]
-        dt = time.time() - t0
+        dt = time.monotonic() - t0
 
         history.append({"epoch": epoch, "lr": lr_now,
                         "train_loss": tr_loss, "train_acc": tr_acc,
@@ -282,7 +282,7 @@ def main():
             print(f"[early stop] no val improvement for {patience} epochs")
             break
 
-    total = time.time() - t_start
+    total = time.monotonic() - t_start
     print("=" * 68)
     print(f"trained in {total/60:.1f} min | best epoch {best_epoch} "
           f"| best val balanced acc {best_score*100:.2f}%")
