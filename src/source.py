@@ -338,6 +338,17 @@ class VideoSource:
             self._cond.notify_all()
         if self._thread is not None:
             self._thread.join(timeout=1.0)
+            if self._thread.is_alive():
+                # The pump is still inside a blocking read - a stalled network
+                # stream can sit in FFMPEG for many seconds. VideoCapture is
+                # not thread-safe, so releasing it underneath that read is a
+                # use-after-free in native code: a crash on the way out of
+                # the app. The thread is a daemon, so leave the capture to the
+                # OS instead. A leak at exit beats a segfault at exit.
+                if self.verbose:
+                    print("[stream] reader still blocked on the network; "
+                          "leaving the capture for the OS to close")
+                return
         if self._cap is not None:
             self._cap.release()
             self._cap = None
