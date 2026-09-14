@@ -164,13 +164,22 @@ class Hud:
         self._last_push = None
 
     # -- state ------------------------------------------------------------
+    def reset(self):
+        """Forget the closure history, e.g. when the counters are reset."""
+        self.hist.clear()
+        self._last_push = None
+
     def push(self, score: float, closed: bool, now: float = None):
         now = time.monotonic() if now is None else now
-        if (self._last_push is not None and now - self._last_push < 0.1
-                and (not self.hist or self.hist[-1][2] == closed)):
-            return
-        self.hist.append((now, float(score), bool(closed)))
-        self._last_push = now
+        # Thin to ~10 Hz, but never drop a sample that changes the closed
+        # flag: a 40 ms blink must still show both of its edges.
+        same = bool(self.hist) and self.hist[-1][2] == closed
+        if not (self._last_push is not None and now - self._last_push < 0.1
+                and same):
+            self.hist.append((now, float(score), bool(closed)))
+            self._last_push = now
+        # Prune on EVERY call, accepted or thinned, so the window is measured
+        # from the current frame rather than from the last accepted sample.
         cut = now - self.window
         while self.hist and self.hist[0][0] < cut:
             self.hist.popleft()

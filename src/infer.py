@@ -357,6 +357,7 @@ def main():
             print("[calibrating] hold your eyes open...")
         elif k == ord("r"):
             monitor.reset()
+            hud.reset()          # the strip is history too
             print("[reset]")
         elif k == ord("a"):
             print(f"[alarm] {'on' if alarm.toggle() else 'off'}")
