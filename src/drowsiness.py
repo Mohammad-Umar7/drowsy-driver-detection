@@ -126,7 +126,6 @@ class DrowsinessMonitor:
 
         self._last_t = None
         self._closed_since = None      # when the current closure began
-        self._microsleep_fired = False
         self._yawn_since = None
         self._nod_since = None
         self._distract_since = None
@@ -189,7 +188,11 @@ class DrowsinessMonitor:
                ear: float = 0.3, mar: float = 0.0, pitch: float = 0.0,
                yaw: float = 0.0, eyes_reliable: bool = True,
                now: Optional[float] = None) -> DrowsyState:
-        now = time.time() if now is None else now
+        # monotonic: time.time() can jump backwards on an NTP correction or a
+        # DST change, which would produce a negative dt (clamped to 0, so a
+        # closure appears to freeze) or a huge one (a 1 s blink read as an
+        # hour). Nothing here needs wall-clock time.
+        now = time.monotonic() if now is None else now
         dt = 0.0 if self._last_t is None else max(0.0, min(1.0, now - self._last_t))
         self._last_t = now
         s = DrowsyState()
@@ -270,7 +273,6 @@ class DrowsinessMonitor:
         # head turn can never be mistaken for a microsleep.
         if not eyes_reliable:
             self._closed_since = None
-            self._microsleep_fired = False
             score, closed = 0.0, False
         else:
             score = self._fuse(closed_prob, ear)
@@ -295,8 +297,6 @@ class DrowsinessMonitor:
             closure = now - self._closed_since
             if closure >= self.cfg.microsleep_sec:
                 microsleep = True
-                if not self._microsleep_fired:
-                    self._microsleep_fired = True
         else:
             if self._closed_since is not None:
                 closure = now - self._closed_since
@@ -306,8 +306,6 @@ class DrowsinessMonitor:
                     self.blinks += 1
                     self._blink_times.append(now)
             self._closed_since = None
-            self._microsleep_fired = False
-            closure = 0.0
         closure_sec = (now - self._closed_since) if self._closed_since else 0.0
 
         # ---- 4. yawning ----------------------------------------------
@@ -492,10 +490,10 @@ class EarCalibrator:
         if not self._armed:
             return None
         if self.t0 is None:
-            self.t0 = time.time()
+            self.t0 = time.monotonic()
         self.samples.append(ear)
 
-        if time.time() - self.t0 < self.seconds:
+        if time.monotonic() - self.t0 < self.seconds:
             return None
         if len(self.samples) < self.min_samples:
             return None         # keep waiting; do NOT give up
@@ -520,4 +518,4 @@ class EarCalibrator:
             return 0.0
         if self.t0 is None:
             return self.seconds          # waiting for a face to appear
-        return max(0.0, self.seconds - (time.time() - self.t0))
+        return max(0.0, self.seconds - (time.monotonic() - self.t0))
