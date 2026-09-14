@@ -228,6 +228,12 @@ class VideoSource:
                     self._frame = frame
                     self._seq += 1
                     self._cond.notify_all()
+                # Give a waiting reader a moment to take the lock. A camera
+                # blocks for a frame interval inside _grab, so this costs
+                # nothing there - but a backend that returns instantly (a
+                # test double, a badly behaved driver) would otherwise loop
+                # straight back into the lock and starve every reader.
+                time.sleep(0.001)
                 continue
 
             self._fail_count += 1

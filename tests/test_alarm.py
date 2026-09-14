@@ -17,7 +17,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from tests._harness import check, summary                        # noqa: E402
+from tests._harness import check, summary, wait_until            # noqa: E402
 from src import alarm as A                                        # noqa: E402
 from src.alarm import Alarm, render, to_wav, duration_sec         # noqa: E402
 
@@ -94,8 +94,7 @@ def test_escalation():
     for _ in range(5):
         a.fire("critical", now=t)
         levels.append(a.last[1])
-        while a.playing:
-            time.sleep(0.005)
+        wait_until(lambda: not a.playing)
         t += 4.0                                  # the alarm cooldown
     top = A.CRITICAL_REPEATS_MAX - A.CRITICAL_REPEATS_MIN
     check("levels climb and cap", levels == [0, 1, top, top, top], f"{levels}")
@@ -103,35 +102,37 @@ def test_escalation():
           f"{spoken[:2]}")
     a.fire("critical", now=t + A.ESCALATION_WINDOW_SEC + 1.0)
     check("a quiet spell resets to level 0", a.last[1] == 0, f"{a.last}")
-    while a.playing:
-        time.sleep(0.005)
+    wait_until(lambda: not a.playing)
     a.fire("drowsy", now=t + 100.0)
-    while a.playing:
-        time.sleep(0.005)
+    wait_until(lambda: not a.playing)
     check("drowsy and distract never speak", len(spoken) == 6, f"{len(spoken)} utterances")
 
 
 def test_never_blocks_and_never_overlaps():
     print("\n[5] fire() returns at once, and a pattern in progress is not stacked on")
-    p = FakePlayer(hold=0.3)
+    p = FakePlayer(hold=1.0)
     a = Alarm(player=p, speaker=lambda s: None)
     t0 = time.monotonic()
     started = a.fire("drowsy")
     dt = time.monotonic() - t0
     check("started", started)
-    check("returned immediately", dt < 0.05, f"{dt * 1000:.0f} ms")
+    # The fake player holds for a full second; a fire() that blocked on it
+    # could not possibly return this fast, even on a heavily loaded machine.
+    check("returned immediately", dt < 0.3, f"{dt * 1000:.0f} ms")
     check("a second fire while playing is dropped", not a.fire("drowsy"))
-    time.sleep(0.4)
+    check("the pattern finishes", wait_until(lambda: not a.playing, timeout=10.0))
     check("only one pattern was played", len(p.played) == 1, f"{len(p.played)}")
     check("fires again once free", a.fire("distract"))
-    time.sleep(0.4)
-    check("second pattern played", len(p.played) == 2)
+    check("second pattern played", wait_until(lambda: len(p.played) == 2, timeout=10.0))
 
 
 def test_muted_and_dead_thread():
     print("\n[6] muted plays nothing; a thread that cannot start does not kill the alarm")
     p = FakePlayer()
-    a = Alarm(enabled=False, player=p)
+    # Every Alarm in this file gets a fake speaker: the real one on Windows
+    # spawns PowerShell to pre-render speech, which is load the suite does
+    # not need and which made the timing checks flaky.
+    a = Alarm(enabled=False, player=p, speaker=lambda s: None)
     check("muted fire() plays nothing", not a.fire("critical") and not p.played)
     a.toggle()
     real_thread = threading.Thread
@@ -146,8 +147,7 @@ def test_muted_and_dead_thread():
     finally:
         A.threading.Thread = real_thread
     check("the next fire works", a.fire("drowsy"))
-    time.sleep(0.05)
-    check("and played", len(p.played) == 1)
+    check("and played", wait_until(lambda: len(p.played) == 1))
 
 
 def test_a_player_that_raises_is_survived():
@@ -156,8 +156,7 @@ def test_a_player_that_raises_is_survived():
         raise OSError("no audio device")
     a = Alarm(player=bad, speaker=lambda s: None)
     a.fire("critical")
-    time.sleep(0.05)
-    check("flag released after the error", not a.playing)
+    check("flag released after the error", wait_until(lambda: not a.playing))
     check("can fire again", a.fire("drowsy"))
 
 

@@ -12,9 +12,29 @@ which is the worst kind of test: one that cannot fail. Under pytest a failed
 check now raises, so it fails the test it belongs to.
 """
 import sys
+import time
 
 _passed = 0
 _failed = 0
+
+
+def wait_until(predicate, timeout: float = 5.0, step: float = 0.01) -> bool:
+    """
+    Poll until `predicate()` is true, or give up after `timeout` seconds.
+
+    Threaded code must be waited FOR, not slept AROUND. A fixed
+    `time.sleep(0.05)` before checking a background thread's result passes
+    on an idle machine and fails when the same suite runs beside an emulator
+    and a Gradle build - which is exactly what happened. Polling with a
+    generous deadline is deterministic: it finishes early when things are
+    quick and still passes when they are slow.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(step)
+    return bool(predicate())
 
 
 def check(name: str, condition, detail: str = ""):

@@ -74,9 +74,11 @@ def test_file_is_paced_to_its_frame_rate():
     while cap.read()[0]:
         pass
     dt = time.monotonic() - t0
-    # 9 intervals of 50 ms plus the first frame. Generous upper bound for a
-    # loaded machine; the point is that it is not near zero.
-    check("took roughly 0.45 s", 0.40 <= dt <= 1.5, f"took {dt:.2f}s")
+    # 9 intervals of 50 ms plus the first frame. The lower bound is the
+    # assertion; the upper one only guards against a hang, and is generous
+    # because this suite also runs beside emulators and Gradle builds.
+    check("took at least the clip's own length", dt >= 0.40, f"took {dt:.2f}s")
+    check("and did not hang", dt <= 4.0, f"took {dt:.2f}s")
     check("describe() reports the pacing", "paced" in cap.describe())
     cap.release()
 
@@ -112,7 +114,7 @@ def test_missing_file_is_reported_not_hung():
     check("not opened", not cap.opened)
     t0 = time.monotonic()
     ok, _ = cap.read()
-    check("read returns False immediately", not ok and time.monotonic() - t0 < 0.5)
+    check("read returns False without waiting", not ok and time.monotonic() - t0 < 2.0)
     cap.release()
 
 
@@ -134,17 +136,21 @@ class _Fake(VideoSource):
             raise RuntimeError("corrupt packet")
         if step == "fail":
             return False, None
-        return True, np.full((8, 8, 3), self.grabs, np.uint8)
+        # Behave like a camera: a frame takes time to arrive. A double that
+        # returns instantly is not a camera - it is a thread spinning flat
+        # out, and it starved this test's own thread on the lock.
+        time.sleep(0.005)
+        return True, np.full((8, 8, 3), self.grabs % 250, np.uint8)
 
 
 def test_dead_source_does_not_block_readers():
     print("\n[6] a source that cannot reconnect is reported dead at once")
     cap = _Fake(["fail"] * 100, reconnect=False)
     t0 = time.monotonic()
-    ok, _ = cap.read(wait=2.0)
+    ok, _ = cap.read(wait=6.0)
     dt = time.monotonic() - t0
     check("read returned False", not ok)
-    check("without waiting out the 2 s timeout", dt < 0.5, f"took {dt:.2f}s")
+    check("without waiting out the 6 s timeout", dt < 2.0, f"took {dt:.2f}s")
     cap.release()
 
 
@@ -155,7 +161,7 @@ def test_reader_survives_an_exception_and_reconnects():
     check("a frame arrived after the reconnect backoff", ok and f is not None)
     check("the thread is still alive", cap._thread.is_alive())
     ok2, f2 = cap.read(wait=2.0)
-    check("and keeps delivering NEW frames", ok2 and int(f2[0, 0, 0]) > int(f[0, 0, 0]))
+    check("and keeps delivering NEW frames", ok2 and not np.array_equal(f2, f))
     cap.release()
 
 
@@ -164,9 +170,11 @@ def test_newest_frame_wins():
     cap = _Fake([], reconnect=True)
     time.sleep(0.05)                     # let the pump race ahead
     ok, a = cap.read(wait=1.0)
+    seq_a = cap._last_seq
     ok2, b = cap.read(wait=1.0)
+    seq_b = cap._last_seq
     check("two reads give two different frames", ok and ok2 and not np.array_equal(a, b))
-    check("the second is newer", ok and ok2 and int(b[0, 0, 0]) > int(a[0, 0, 0]))
+    check("the second is newer", ok and ok2 and seq_b > seq_a, f"seq {seq_a} -> {seq_b}")
     cap.release()
     check("release stops the pump", not cap._thread.is_alive())
 
