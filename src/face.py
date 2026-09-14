@@ -125,13 +125,16 @@ class FaceTracker:
         else:
             ear = max(ear_l, ear_r)     # nothing trustworthy; bias toward open
 
-        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        # Crop FIRST, then let preprocess_eye convert the crop to grayscale.
+        # The old order converted the entire 1280x720 frame to grayscale every
+        # frame just to read two ~60x60 eye patches out of it -- roughly 250x
+        # more pixels than needed, on the hot path.
         box_l = G.bbox_from_points(pts[G.LEFT_EYE_CONTOUR],
                                    self.crop_margin, frame_bgr.shape)
         box_r = G.bbox_from_points(pts[G.RIGHT_EYE_CONTOUR],
                                    self.crop_margin, frame_bgr.shape)
-        eye_l = preprocess_eye(G.safe_crop(gray, box_l), self.img_size)
-        eye_r = preprocess_eye(G.safe_crop(gray, box_r), self.img_size)
+        eye_l = preprocess_eye(G.safe_crop(frame_bgr, box_l), self.img_size)
+        eye_r = preprocess_eye(G.safe_crop(frame_bgr, box_r), self.img_size)
 
         return FaceObs(
             landmarks_px=pts,
