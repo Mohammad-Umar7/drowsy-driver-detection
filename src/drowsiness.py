@@ -33,6 +33,10 @@ Four signals are tracked, each catching a different stage of falling asleep:
   4. HEAD NOD     head pitch dropping and staying down. The classic
                   head-bob of someone losing consciousness.
 
+  5. LONG BLINKS  closures longer than a blink (0.45 s) but shorter than a
+                  microsleep (2 s). Blink duration climbs well before the
+                  eyes stay shut, so a cluster of these is an EARLY warning.
+
 Everything is measured in SECONDS, never in frames. If you count frames, your
 thresholds silently change meaning when the frame rate changes -- a laptop on
 battery drops to 15 FPS and suddenly "20 frames closed" means 1.3 s instead of
@@ -86,6 +90,8 @@ class DrowsyState:
     microsleep: bool = False
     blinks: int = 0
     blink_rate: float = 0.0          # blinks per minute
+    long_blinks: int = 0             # closures between blink and microsleep
+    long_blink_rate: float = 0.0     # per minute
     yawns: int = 0
     yawn_rate: float = 0.0           # yawns per minute
     yawning: bool = False
@@ -123,6 +129,7 @@ class DrowsinessMonitor:
         self._win = deque()
         self._yawn_times = deque()
         self._blink_times = deque()
+        self._long_blink_times = deque()
 
         self._last_t = None
         self._closed_since = None      # when the current closure began
@@ -136,6 +143,7 @@ class DrowsinessMonitor:
         self._last_distract_alarm_t = 0.0
 
         self.blinks = 0
+        self.long_blinks = 0
         self.yawns = 0
         self.state = DrowsyState()
 
@@ -182,6 +190,8 @@ class DrowsinessMonitor:
             self._yawn_times.popleft()
         while self._blink_times and self._blink_times[0] < cut_y:
             self._blink_times.popleft()
+        while self._long_blink_times and self._long_blink_times[0] < cut_y:
+            self._long_blink_times.popleft()
 
     # ------------------------------------------------------------------
     def update(self, face_found: bool, closed_prob: Optional[float] = None,
@@ -255,6 +265,7 @@ class DrowsinessMonitor:
             # Counters are kept so the driver cannot clear a bad PERCLOS by
             # ducking out of frame.
             s = DrowsyState(level=level, blinks=self.blinks, yawns=self.yawns,
+                            long_blinks=self.long_blinks,
                             reasons=reasons, should_alarm=should_alarm,
                             alarm_kind=alarm_kind, eyes_reliable=False)
             self.state = s
@@ -305,6 +316,12 @@ class DrowsinessMonitor:
                 if closure <= self.cfg.blink_max_sec:
                     self.blinks += 1
                     self._blink_times.append(now)
+                elif closure < self.cfg.microsleep_sec:
+                    # Too long for a blink, too short for a microsleep.
+                    # Previously this fell through both branches and was
+                    # simply forgotten.
+                    self.long_blinks += 1
+                    self._long_blink_times.append(now)
             self._closed_since = None
         closure_sec = (now - self._closed_since) if self._closed_since else 0.0
 
@@ -387,6 +404,11 @@ class DrowsinessMonitor:
             level = max(level, Level.DROWSY)
             reasons.append(f"{len(self._yawn_times)} yawns/min")
 
+        n_long = len(self._long_blink_times)
+        if n_long >= self.cfg.long_blink_rate_warn:
+            level = max(level, Level.DROWSY)
+            reasons.append(f"{n_long} long blinks/min")
+
         if nodding:
             level = max(level, Level.DROWSY)
             reasons.append("head nodding")
@@ -420,6 +442,8 @@ class DrowsinessMonitor:
             level=level, closed=closed, closed_score=score, perclos=perclos,
             closure_sec=closure_sec, microsleep=microsleep,
             blinks=self.blinks, blink_rate=blink_rate,
+            long_blinks=self.long_blinks,
+            long_blink_rate=n_long * 60.0 / self.cfg.yawn_window_sec,
             yawns=self.yawns, yawn_rate=yawn_rate, yawning=yawning,
             nodding=nodding, distracted=distracted,
             reasons=reasons or ["normal"], should_alarm=should_alarm,

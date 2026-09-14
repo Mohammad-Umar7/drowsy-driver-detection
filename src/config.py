@@ -89,6 +89,11 @@ class DrowsyCfg:
     # a slow deliberate blink. 2.0 s is unambiguous: nobody blinks for 2 s.
     microsleep_sec: float = 2.0         # TUNE
     blink_max_sec: float = 0.45         # closures shorter than this are normal blinks
+    # A closure longer than a blink but shorter than a microsleep is a LONG
+    # BLINK. Blink duration climbing is one of the earliest fatigue signs in
+    # the literature - it rises well before the eyes stay shut - and until
+    # now it was dropped on the floor: neither a blink nor a microsleep.
+    long_blink_rate_warn: int = 3       # TUNE  this many per minute -> DROWSY
 
     # ---- PERCLOS (the automotive-industry metric) ----
     perclos_window_sec: float = 30.0    # rolling window length

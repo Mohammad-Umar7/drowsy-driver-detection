@@ -412,6 +412,25 @@ def test_yawn_timer_does_not_survive_face_loss():
     check("no yawn was counted", st.yawns == 0, f"got {st.yawns}")
 
 
+def test_long_blinks_are_an_early_warning():
+    print("\n[22] three 0.8 s closures in a minute -> DROWSY via long blinks")
+    m = DrowsinessMonitor()
+    t = 1000.0
+    for _ in range(3):
+        _, t = run(m, 5.2, t, ear=EAR_OPEN)
+        _, t = run(m, 0.8, t, ear=EAR_SHUT)     # > blink_max, < microsleep
+    st, _ = run(m, 1.0, t, ear=EAR_OPEN)
+    check("counted as long blinks", st.long_blinks == 3, f"got {st.long_blinks}")
+    check("NOT counted as ordinary blinks", st.blinks == 0, f"got {st.blinks}")
+    check("no microsleep fired", not st.microsleep)
+    check("PERCLOS alone is below its warn line", st.perclos < D.perclos_warn,
+          f"got {st.perclos:.3f}")
+    check("level is DROWSY", st.level == Level.DROWSY, f"got {st.level.name}")
+    check("reason names the long blinks",
+          any("long blinks" in r for r in st.reasons), f"got {st.reasons}")
+    print(f"        -> {st.reasons}")
+
+
 def test_face_lost():
     print("\n[11] face disappears -> NO_FACE after the grace period")
     m = DrowsinessMonitor()
@@ -441,6 +460,7 @@ if __name__ == "__main__":
                test_drowsy_driver_slumping_out_of_frame_keeps_alarming,
                test_awake_driver_out_of_view_gets_a_nudge_not_a_siren,
                test_yawn_timer_does_not_survive_face_loss,
+               test_long_blinks_are_an_early_warning,
                test_face_lost):
         fn()
     print("\n" + "=" * 60)
