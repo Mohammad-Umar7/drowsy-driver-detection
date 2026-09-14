@@ -209,7 +209,18 @@ class VideoSource:
         """
         backoff = 0.5
         while not self._stop.is_set():
-            ok, frame = self._grab()
+            try:
+                ok, frame = self._grab()
+            except Exception as e:          # noqa: BLE001
+                # A backend can raise instead of returning False - a corrupt
+                # packet on a stream, a driver hiccup on a webcam. Unhandled,
+                # that killed this thread silently: no more frames, _stop
+                # never set, and every read() blocked for its full timeout
+                # until the app gave up 30 s later with no idea why. Treat it
+                # as a failed read so the reconnect logic below runs.
+                if self.verbose and self._fail_count == 0:
+                    print(f"[stream] read raised {type(e).__name__}: {e}")
+                ok, frame = False, None
             if ok:
                 self._fail_count = 0
                 backoff = 0.5
