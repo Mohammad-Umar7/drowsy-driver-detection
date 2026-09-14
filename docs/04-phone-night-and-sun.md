@@ -147,23 +147,25 @@ one-sided brightness ramp is not a faithful model of sky-through-windscreen.
 
 ---
 
-## 4. Reading the HUD
+## 4. Reading the display
 
-```
-light: NIGHT  mean  38  gamma 0.61
-eye px 53/49  using [LR]
-```
+The lighting condition is the chip in the top bar next to the frame rate:
+`NORMAL` in grey, or `NIGHT` / `DIM` / `BRIGHT SUN` / `BACKLIT` in amber
+whenever the scene is genuinely difficult — so a bad reading can be blamed on
+the light rather than the driver. With correction switched off it reads
+`(fix off)`.
+
+The eye line in the metrics card is the other thing to watch here:
 
 | Field | Meaning |
 |---|---|
-| `light:` | detected condition — amber when the scene is difficult |
-| `mean` | average frame luminance, 0–255. Under ~45 is night |
-| `gamma` | correction being applied. Below 1 brightens, above 1 darkens, 1.00 is untouched |
-| `eye px` | wider/narrower eye in pixels. Under ~30 and the eyelid is only a few pixels tall |
-| `using [LR]` | which eyes are trusted. `[L-]` means the right eye is turned away and being ignored |
+| `eyes [LR] 53px` | which eyes are trusted, and the wider eye's width in pixels. `[L-]` means the right eye is turned away and being ignored; the line turns amber when neither eye is usable |
+| under ~30 px | the eyelid is only a few pixels tall and a 2 px landmark error is a 30 % error in EAR. Sit closer, or raise the capture resolution |
 
 Press **`l`** to toggle enhancement on and off while watching, so you can see
-what it is doing rather than trusting that it works.
+what it is doing rather than trusting that it works. For the numbers behind
+the chip — mean luminance, the gamma being applied — run
+`python scripts/test_lighting.py`, which prints them per condition.
 
 ---
 
