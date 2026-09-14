@@ -104,6 +104,10 @@ class VideoSource:
 
         self._cap = None
         self._lock = threading.Lock()
+        # Waiters block on this instead of polling. The pump notifies once
+        # per captured frame, so a consumer sleeps properly between frames
+        # rather than waking 500 times a second to check.
+        self._cond = threading.Condition(self._lock)
         self._frame = None
         self._seq = 0            # increments per captured frame
         self._last_seq = -1      # last sequence number handed out
@@ -192,9 +196,10 @@ class VideoSource:
             if ok:
                 self._fail_count = 0
                 backoff = 0.5
-                with self._lock:
+                with self._cond:
                     self._frame = frame
                     self._seq += 1
+                    self._cond.notify_all()
                 continue
 
             self._fail_count += 1
@@ -222,9 +227,11 @@ class VideoSource:
         if not self.threaded:
             return self._grab()
 
-        deadline = time.time() + wait
-        while time.time() < deadline:
-            with self._lock:
+        # monotonic, not time.time(): an NTP adjustment or a DST change would
+        # otherwise stretch or collapse this deadline.
+        deadline = time.monotonic() + wait
+        with self._cond:
+            while True:
                 if self._frame is not None and self._seq != self._last_seq:
                     self._last_seq = self._seq
                     # No copy. cv2.read(), rotate() and flip() each return a
@@ -234,10 +241,15 @@ class VideoSource:
                     # this replaces was 2.7 MB of memcpy per frame at 720p:
                     # ~77 MB/s of pure waste at 28 fps.
                     return True, self._frame
-            if self._stop.is_set():
-                break
-            time.sleep(0.002)
-        return False, None
+                if self._stop.is_set():
+                    return False, None
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False, None
+                # Sleeps until the pump notifies or the deadline passes. The
+                # old loop was `time.sleep(0.002)` in a busy loop: ~500 wakeups
+                # a second on a core that had nothing to do.
+                self._cond.wait(remaining)
 
     @property
     def size(self) -> Tuple[int, int]:
@@ -267,6 +279,8 @@ class VideoSource:
 
     def release(self):
         self._stop.set()
+        with self._cond:
+            self._cond.notify_all()
         if self._thread is not None:
             self._thread.join(timeout=1.0)
         if self._cap is not None:
