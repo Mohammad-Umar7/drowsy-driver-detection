@@ -20,7 +20,8 @@ Keys:
     c         calibrate (hold eyes OPEN and look at the camera for 3 s)
     r         reset all counters
     a         mute / unmute the alarm
-    d         toggle the debug panel (eye crops + landmarks)
+    d         toggle the debug panel (the exact 32x32 crops the CNN sees)
+    l         toggle the night / sun correction
     s         save a screenshot to reports/
 
 =============================================================================
@@ -49,152 +50,12 @@ import torch
 
 from .alarm import Alarm
 from .config import CFG
-from .drowsiness import (DrowsinessMonitor, EarCalibrator, Level,
-                         LEVEL_COLOR, LEVEL_TEXT)
+from .drowsiness import DrowsinessMonitor, EarCalibrator, Level, LEVEL_TEXT
 from .face import FaceTracker
-from .lighting import LightingNormalizer, LIGHT_TEXT, Light
+from .hud import Hud, draw_face
+from .lighting import LightingNormalizer
 from .source import VideoSource
 from .model import build_model
-
-FONT = cv2.FONT_HERSHEY_SIMPLEX
-
-
-# ---------------------------------------------------------------------------
-# drawing helpers
-# ---------------------------------------------------------------------------
-def draw_panel(img, x, y, w, h, alpha=0.55):
-    """
-    Translucent dark panel behind text so it stays readable on any background.
-
-    Trick: draw the rectangle on a COPY, then blend the copy with the original.
-    OpenCV has no native alpha, so blending two full images is how you fake it.
-    """
-    sub = img[y:y + h, x:x + w]
-    if sub.size == 0:
-        return
-    box = np.zeros_like(sub)
-    img[y:y + h, x:x + w] = cv2.addWeighted(sub, 1 - alpha, box, alpha, 0)
-
-
-def draw_bar(img, x, y, w, h, frac, color, label, warn_at=None):
-    """Horizontal progress bar with an optional threshold tick mark."""
-    cv2.rectangle(img, (x, y), (x + w, y + h), (70, 70, 70), 1)
-    fill = int(w * max(0.0, min(1.0, frac)))
-    if fill > 0:
-        cv2.rectangle(img, (x + 1, y + 1), (x + fill - 1, y + h - 1), color, -1)
-    if warn_at is not None:
-        wx = x + int(w * warn_at)
-        cv2.line(img, (wx, y - 2), (wx, y + h + 2), (255, 255, 255), 1)
-    cv2.putText(img, label, (x + w + 8, y + h - 2), FONT, 0.42,
-                (230, 230, 230), 1, cv2.LINE_AA)
-
-
-def draw_hud(frame, st, obs, fps, ear_thr, model_on, alarm_on, debug,
-             lighting=None):
-    h, w = frame.shape[:2]
-    color = LEVEL_COLOR[st.level]
-
-    # --- big status banner ---
-    draw_panel(frame, 0, 0, w, 62)
-    cv2.putText(frame, LEVEL_TEXT[st.level], (14, 44), FONT, 1.25, color, 3,
-                cv2.LINE_AA)
-    reason = " | ".join(st.reasons[:2])
-    cv2.putText(frame, reason, (w - 12 - 8 * len(reason), 26), FONT, 0.46,
-                (215, 215, 215), 1, cv2.LINE_AA)
-    cv2.putText(frame, f"{fps:4.1f} FPS", (w - 88, 50), FONT, 0.5,
-                (180, 180, 180), 1, cv2.LINE_AA)
-
-    # --- red border pulse on CRITICAL: peripheral vision catches motion even
-    #     when you are not looking straight at the screen ---
-    if st.level == Level.CRITICAL and int(time.time() * 6) % 2 == 0:
-        cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), 14)
-
-    # --- metrics panel ---
-    py = h - 153
-    draw_panel(frame, 0, py, 340, 153)
-    y = py + 22
-
-    draw_bar(frame, 12, y - 10, 150, 12, st.perclos,
-             (0, 165, 255) if st.perclos >= CFG.drowsy.perclos_warn
-             else (90, 190, 90),
-             f"PERCLOS {st.perclos*100:4.1f}%",
-             warn_at=CFG.drowsy.perclos_warn)
-    y += 24
-
-    draw_bar(frame, 12, y - 10, 150, 12, st.closed_score,
-             (0, 0, 235) if st.closed else (90, 190, 90),
-             f"closed {st.closed_score:.2f}", warn_at=0.5)
-    y += 24
-
-    if obs is not None:
-        cv2.putText(frame, f"EAR {obs.ear:.3f} (thr {ear_thr:.3f})   "
-                           f"MAR {obs.mar:.2f}", (12, y), FONT, 0.46,
-                    (215, 215, 215), 1, cv2.LINE_AA)
-        y += 21
-        cv2.putText(frame, f"pitch {obs.pitch:+5.1f}  yaw {obs.yaw:+5.1f}  "
-                           f"roll {obs.roll:+5.1f}", (12, y), FONT, 0.46,
-                    (215, 215, 215), 1, cv2.LINE_AA)
-        y += 21
-        # Eye size in pixels and which eyes are being trusted. This line is
-        # what makes the "turned head = false closure" class of bug visible
-        # instead of mysterious.
-        eyes = ("L" if obs.use_left else "-") + ("R" if obs.use_right else "-")
-        wmax = max(obs.width_left, obs.width_right)
-        wmin = min(obs.width_left, obs.width_right)
-        cv2.putText(frame, f"eye px {wmax:.0f}/{wmin:.0f}  using [{eyes}]"
-                           f"{'' if st.eyes_reliable else '  UNRELIABLE'}",
-                    (12, y), FONT, 0.46,
-                    (215, 215, 215) if st.eyes_reliable else (0, 200, 255),
-                    1, cv2.LINE_AA)
-        y += 21
-
-    # Long blinks get their own count: they are the early-warning signal, and
-    # a driver watching that number climb learns something useful.
-    cv2.putText(frame, f"blinks {st.blinks}   long {st.long_blinks} "
-                       f"({st.long_blink_rate:.0f}/min)   "
-                       f"yawns {st.yawns} ({st.yawn_rate:.0f}/min)",
-                (12, y), FONT, 0.46, (215, 215, 215), 1, cv2.LINE_AA)
-
-    # --- lighting readout, top-left under the banner ---
-    if lighting is not None:
-        ls = lighting.stats
-        # Amber whenever the light is genuinely difficult, so it is obvious
-        # that a bad reading might be the scene rather than the driver.
-        col = ((150, 210, 150) if ls.condition == Light.NORMAL
-               else (0, 200, 255))
-        tag = LIGHT_TEXT.get(ls.condition, "?")
-        cv2.putText(frame, f"light: {tag}  mean {ls.mean:>3.0f}  "
-                           f"gamma {ls.gamma:.2f}"
-                           f"{'' if lighting.enabled else '  [OFF]'}",
-                    (14, 82), FONT, 0.5, col, 1, cv2.LINE_AA)
-
-    # --- footer ---
-    mode = "CNN+EAR" if model_on else "EAR only"
-    cv2.putText(frame, f"[{mode}]  alarm {'ON' if alarm_on else 'OFF'}   "
-                       f"q quit  c calib  r reset  a alarm  d debug  l light  s shot",
-                (12, h - 8), FONT, 0.40, (170, 170, 170), 1, cv2.LINE_AA)
-
-    # --- debug: show exactly what the CNN sees ---
-    if debug and obs is not None:
-        for i, eye in enumerate((obs.eye_left, obs.eye_right)):
-            big = cv2.resize((eye * 255).astype(np.uint8), (96, 96),
-                             interpolation=cv2.INTER_NEAREST)
-            big = cv2.cvtColor(big, cv2.COLOR_GRAY2BGR)
-            x0 = w - 210 + i * 102
-            frame[70:166, x0:x0 + 96] = big
-            cv2.rectangle(frame, (x0, 70), (x0 + 96, 166), (110, 110, 110), 1)
-        cv2.putText(frame, "what the CNN sees", (w - 210, 182), FONT, 0.40,
-                    (170, 170, 170), 1, cv2.LINE_AA)
-
-
-def draw_landmarks(frame, obs):
-    """Outline the eyes and mouth, and colour the eyes by state."""
-    from . import geometry as G
-    for idx in (G.LEFT_EYE_CONTOUR, G.RIGHT_EYE_CONTOUR):
-        pts = obs.landmarks_px[idx].astype(np.int32)
-        cv2.polylines(frame, [pts], True, (0, 220, 120), 1, cv2.LINE_AA)
-    mouth = obs.landmarks_px[G.MOUTH_UPPER + G.MOUTH_LOWER[::-1]].astype(np.int32)
-    cv2.polylines(frame, [mouth], True, (200, 160, 0), 1, cv2.LINE_AA)
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +177,7 @@ def main():
     times = deque(maxlen=30)
     t_prev = None
     debug = False
+    hud = Hud()
     WIN = "Drowsy Driver Detection"
     cv2.namedWindow(WIN, cv2.WINDOW_AUTOSIZE)
     # Keep the window on top so it cannot open behind the editor and look
@@ -369,12 +231,7 @@ def main():
             # under a banner, and keep honouring keystrokes.
             if last_frame is not None:
                 shown = last_frame.copy()
-                draw_panel(shown, 0, 0, shown.shape[1], 62)
-                cv2.putText(shown, "SIGNAL LOST", (14, 44), FONT, 1.25,
-                            (0, 165, 255), 3, cv2.LINE_AA)
-                cv2.putText(shown, f"reconnecting... {gone:.0f}s",
-                            (shown.shape[1] - 250, 40), FONT, 0.6,
-                            (215, 215, 215), 1, cv2.LINE_AA)
+                hud.draw_signal_lost(shown, gone)
                 cv2.imshow(WIN, shown)
             if (cv2.waitKey(1) & 0xFF) in (ord("q"), 27):
                 break
@@ -399,6 +256,7 @@ def main():
         obs = tracker.process(frame)
 
         closed_prob = None
+        probs = None
         if obs is not None and model is not None:
             # Both eyes as ONE batch of 2 -> a single GPU call.
             batch = torch.from_numpy(
@@ -415,8 +273,9 @@ def main():
             # sliver 0.68 "closed", while the near eye correctly said 0.03.
             # max() picked the garbage and reported a false closure.
             # face.py flags which eyes are worth trusting; we honour that.
-            usable = [v for v, use in zip(p.tolist(),
-                                          (obs.use_left, obs.use_right)) if use]
+            probs = tuple(p.tolist())
+            usable = [v for v, use in zip(probs, (obs.use_left, obs.use_right))
+                      if use]
             closed_prob = max(usable) if usable else None
 
         # Only feed the calibrator when the eyes are actually readable. With
@@ -455,10 +314,7 @@ def main():
             alarm.fire(kind=st.alarm_kind or "drowsy")
 
         if obs is not None:
-            draw_landmarks(frame, obs)
-            c = (0, 0, 235) if st.closed else (0, 220, 120)
-            for box in (obs.box_left, obs.box_right):
-                cv2.rectangle(frame, box[:2], box[2:], c, 1)
+            draw_face(frame, obs, st.closed)
 
         # True end-to-end frame rate, measured from the start of one iteration
         # to the start of the next so it INCLUDES the camera read.
@@ -470,15 +326,9 @@ def main():
             times.append(loop_now - t_prev)
         t_prev = loop_now
         fps = 1.0 / max(1e-6, float(np.mean(times))) if times else 0.0
-        draw_hud(frame, st, obs, fps, ear_thr, model is not None,
-                 alarm.enabled, debug, lighting)
-
-        if calib.active:
-            msg = ("CALIBRATING - keep eyes OPEN  "
-                   f"{calib.remaining():.1f}s" if obs is not None
-                   else "CALIBRATING - waiting for a face...")
-            cv2.putText(frame, msg, (14, 92), FONT, 0.75, (0, 255, 255), 2,
-                        cv2.LINE_AA)
+        hud.push(st.closed_score, st.closed)
+        hud.draw(frame, st, obs, fps, ear_thr, model is not None,
+                 alarm.enabled, debug, lighting, calib=calib, probs=probs)
 
         if args.record and writer is None and len(times) >= 30:
             rec_fps = float(min(60.0, max(5.0, round(fps))))
