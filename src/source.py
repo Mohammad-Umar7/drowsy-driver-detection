@@ -204,6 +204,14 @@ class VideoSource:
 
             self._fail_count += 1
             if not self.reconnect:
+                # Mark the source dead BEFORE leaving. Without this the thread
+                # exits with _stop still clear, so every later read() blocks
+                # for its full timeout and returns nothing, forever, with no
+                # way for the caller to tell "dead" from "slow". Set the flag
+                # and wake any waiter so read() returns (False, None) at once.
+                self._stop.set()
+                with self._cond:
+                    self._cond.notify_all()
                 break
             # Exponential backoff, capped, so a dead source does not spin the
             # CPU while a briefly flaky one recovers quickly.
