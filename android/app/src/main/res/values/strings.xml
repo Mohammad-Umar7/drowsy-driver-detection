@@ -1,4 +1,6 @@
 <resources>
     <string name="app_name">Drowsy Driver</string>
     <string name="camera_needed">Camera permission is required to watch for drowsiness.</string>
+    <string name="camera_missing">This device has no camera on that side. Staying on the one it has.</string>
+    <string name="camera_failed">Could not start the camera. Is another app using it?</string>
 </resources>

@@ -218,15 +218,28 @@ class MainActivity : AppCompatActivity() {
                 .build()
             analysis.setAnalyzer(analysisExecutor) { proxy -> onFrame(proxy) }
 
+            // Not every device has both cameras: a tablet in a dash mount
+            // may have no rear one, and a few cheap phones have no front.
+            // Binding to a lens that is not there throws, and the old catch
+            // below just logged it - leaving the preview frozen on the last
+            // frame of the OTHER camera with no explanation. Check first and
+            // stay on the camera that exists.
+            var selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+            val available = try { provider.hasCamera(selector) } catch (e: Exception) { false }
+            if (!available) {
+                val other = if (lensFacing == CameraSelector.LENS_FACING_FRONT)
+                    CameraSelector.LENS_FACING_BACK else CameraSelector.LENS_FACING_FRONT
+                Toast.makeText(this, R.string.camera_missing, Toast.LENGTH_SHORT).show()
+                lensFacing = other
+                selector = CameraSelector.Builder().requireLensFacing(other).build()
+            }
+
             try {
                 provider.unbindAll()
-                provider.bindToLifecycle(
-                    this,
-                    CameraSelector.Builder().requireLensFacing(lensFacing).build(),
-                    preview, analysis
-                )
+                provider.bindToLifecycle(this, selector, preview, analysis)
             } catch (e: Exception) {
                 Log.e(TAG, "bind failed", e)
+                Toast.makeText(this, R.string.camera_failed, Toast.LENGTH_LONG).show()
             }
         }, ContextCompat.getMainExecutor(this))
     }
