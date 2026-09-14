@@ -47,6 +47,11 @@ object Cfg {
     const val ALARM_COOLDOWN_SEC = 4.0
     const val DISTRACT_ALARM_COOLDOWN_SEC = 9.0
     const val FACE_LOST_GRACE_SEC = 2.0
+    // Hold DROWSY/CRITICAL and keep alarming for this long after the face
+    // vanishes. A drowsy driver slumping out of frame must not silence it.
+    const val FACE_LOST_HOLD_SEC = 15.0
+    // An otherwise-awake driver out of view this long gets a gentle nudge.
+    const val FACE_LOST_NUDGE_SEC = 8.0
 }
 
 enum class Level(val rank: Int, val text: String) {
@@ -102,6 +107,8 @@ class DrowsinessMonitor(
     private var nodSince: Double? = null
     private var distractSince: Double? = null
     private var lastFaceT: Double? = null
+    private var lostSince: Double? = null
+    private var levelAtLoss: Level = Level.AWAKE
     private var lastAlarmT = 0.0
     private var lastDistractAlarmT = 0.0
 
@@ -113,6 +120,7 @@ class DrowsinessMonitor(
         window.clear(); yawnTimes.clear(); blinkTimes.clear()
         lastT = null; closedSince = null; yawnSince = null
         nodSince = null; distractSince = null; lastFaceT = null
+        lostSince = null; levelAtLoss = Level.AWAKE
         lastAlarmT = 0.0; lastDistractAlarmT = 0.0
         blinks = 0; yawns = 0
         state = DrowsyState()
@@ -171,13 +179,50 @@ class DrowsinessMonitor(
                     shouldAlarm = false, alarmKind = "")
                 return state
             }
-            closedSince = null
-            state = DrowsyState(level = Level.NO_FACE, blinks = blinks, yawns = yawns,
-                reasons = listOf("no face detected"))
+            // Genuinely gone. Freeze the closure timer AND the mouth/head
+            // timers: a yawn or nod that began before the dropout must not be
+            // "completed" the instant the face returns.
+            if (lostSince == null) {
+                lostSince = lastFaceT ?: now
+                levelAtLoss = state.level
+            }
+            val gone = now - lostSince!!
+            closedSince = null; yawnSince = null; nodSince = null; distractSince = null
+
+            var level = Level.NO_FACE
+            var reasons = listOf("no face detected")
+            var shouldAlarm = false
+            var alarmKind = ""
+
+            if (levelAtLoss.rank >= Level.DROWSY.rank && gone <= Cfg.FACE_LOST_HOLD_SEC) {
+                // THE SAFETY CASE. A drowsy driver slumping out of frame is the
+                // most dangerous way to lose a face. NO_FACE ranks below AWAKE
+                // and never alarms, so the old code went SILENT at exactly the
+                // moment it mattered most. Hold the level and keep alarming.
+                level = levelAtLoss
+                reasons = listOf("FACE LOST while ${level.text} (%.0fs)".format(gone))
+                if (now - lastAlarmT >= Cfg.ALARM_COOLDOWN_SEC) {
+                    shouldAlarm = true
+                    alarmKind = if (level == Level.CRITICAL) "critical" else "drowsy"
+                    lastAlarmT = now
+                }
+            } else if (gone >= Cfg.FACE_LOST_NUDGE_SEC) {
+                // Not drowsy, but out of view for a while: a gentle nudge.
+                level = Level.DISTRACTED
+                reasons = listOf("driver not visible (%.0fs)".format(gone))
+                if (now - lastDistractAlarmT >= Cfg.DISTRACT_ALARM_COOLDOWN_SEC) {
+                    shouldAlarm = true; alarmKind = "distract"; lastDistractAlarmT = now
+                }
+            }
+
+            state = DrowsyState(level = level, blinks = blinks, yawns = yawns,
+                reasons = reasons, shouldAlarm = shouldAlarm, alarmKind = alarmKind,
+                eyesReliable = false)
             return state
         }
 
         lastFaceT = now
+        lostSince = null
         prune(now)
 
         // ---- 1. closed right now? ----
