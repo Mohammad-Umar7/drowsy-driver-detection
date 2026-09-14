@@ -115,6 +115,7 @@ class VideoSource:
         self._stop = threading.Event()
         self._thread = None
         self._fail_count = 0
+        self._ended = False      # a FILE source has run out of frames
 
         self._open()
         if self.threaded:
@@ -239,7 +240,14 @@ class VideoSource:
         cannot make us process the same frame twice.
         """
         if not self.threaded:
-            return self._grab()
+            ok, frame = self._grab()
+            if not ok and self.is_file:
+                # A file that returns no frame has simply finished. Without
+                # this flag the caller cannot tell "the clip is over" from
+                # "the camera dropped out", and treated the end of every
+                # recording as a signal loss to be waited out.
+                self._ended = True
+            return ok, frame
 
         # monotonic, not time.time(): an NTP adjustment or a DST change would
         # otherwise stretch or collapse this deadline.
@@ -279,6 +287,11 @@ class VideoSource:
     @property
     def opened(self) -> bool:
         return self._cap is not None and self._cap.isOpened()
+
+    @property
+    def ended(self) -> bool:
+        """True once a video FILE has been read to the end. Never for a camera."""
+        return self._ended
 
     def describe(self) -> str:
         kind = "phone/network stream" if self.is_net else (

@@ -346,6 +346,12 @@ def main():
         # way to quit it.
         ok, frame = cap.read(wait=0.25)
         if not ok:
+            if cap.ended:
+                # A recording that has played to the end is not a dropped
+                # camera. This used to fall into the SIGNAL LOST branch below
+                # and sit there "reconnecting" for 30 s before giving up.
+                print("[done] end of video")
+                break
             if lost_since is None:
                 lost_since = time.time()
             gone = time.time() - lost_since
