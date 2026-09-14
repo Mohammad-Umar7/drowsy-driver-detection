@@ -227,7 +227,13 @@ class VideoSource:
             with self._lock:
                 if self._frame is not None and self._seq != self._last_seq:
                     self._last_seq = self._seq
-                    return True, self._frame.copy()
+                    # No copy. cv2.read(), rotate() and flip() each return a
+                    # NEW array, and the pump only ever REASSIGNS self._frame,
+                    # never writes into an existing one -- so the array handed
+                    # out here is never touched again by the pump. The copy
+                    # this replaces was 2.7 MB of memcpy per frame at 720p:
+                    # ~77 MB/s of pure waste at 28 fps.
+                    return True, self._frame
             if self._stop.is_set():
                 break
             time.sleep(0.002)
