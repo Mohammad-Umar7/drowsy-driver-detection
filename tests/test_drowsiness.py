@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tests._harness import check, summary             # noqa: E402
 from src.config import CFG                            # noqa: E402
 from src.drowsiness import (DrowsinessMonitor, EarCalibrator,  # noqa: E402
                             Level)
@@ -32,18 +33,6 @@ D = CFG.drowsy   # durations come from config, never hard-coded here
 
 FPS = 30.0
 DT = 1.0 / FPS
-
-_passed, _failed = 0, 0
-
-
-def check(name, condition, detail=""):
-    global _passed, _failed
-    if condition:
-        _passed += 1
-        print(f"  PASS  {name}")
-    else:
-        _failed += 1
-        print(f"  FAIL  {name}   {detail}")
 
 
 def run(monitor, seconds, t0, *, ear, mar=0.1, pitch=0.0, yaw=0.0,
@@ -489,7 +478,4 @@ if __name__ == "__main__":
                test_no_nudge_before_anyone_has_been_seen,
                test_face_lost):
         fn()
-    print("\n" + "=" * 60)
-    print(f"{_passed} passed, {_failed} failed")
-    print("=" * 60)
-    sys.exit(1 if _failed else 0)
+    summary("drowsiness")
