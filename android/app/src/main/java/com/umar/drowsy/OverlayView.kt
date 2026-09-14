@@ -68,6 +68,17 @@ class OverlayView @JvmOverloads constructor(
 
     private var f = HudFrame()
 
+    // System-bar insets. Targeting Android 15 makes the app edge-to-edge, so
+    // this view extends under the status bar and the gesture bar; the cards
+    // must be drawn inside those bands or the clock lands on the status pill.
+    private var insetTop = 0f
+    private var insetBottom = 0f
+
+    fun setInsets(top: Float, bottom: Float) {
+        insetTop = top; insetBottom = bottom
+        invalidate()
+    }
+
     // (time, score, closed) at ~10 Hz over the PERCLOS window.
     private class Sample(val t: Double, val score: Double, val closed: Boolean)
     private val hist = ArrayDeque<Sample>()
@@ -237,10 +248,11 @@ class OverlayView @JvmOverloads constructor(
 
         // ---- top card ----
         val topH = dp(92f)
-        panel(canvas, m, m, w - m, m + topH, radius)
+        val topY = m + insetTop
+        panel(canvas, m, topY, w - m, topY + topH, radius)
         var x = m + dp(12f)
         val pillH = dp(36f)
-        val pillY = m + dp(12f)
+        val pillY = topY + dp(12f)
         chip(canvas, st.level.text, x, pillY, pillH,
              if (flash) bad else Color.rgb(14, 16, 22), if (flash) ink else col,
              textPill, dp(14f))
@@ -269,12 +281,12 @@ class OverlayView @JvmOverloads constructor(
         val avail = (w - m - dp(12f)) - x
         canvas.drawText(
             TextUtils.ellipsize(reason, textSmall, avail, TextUtils.TruncateAt.END).toString(),
-            x, m + topH - dp(14f), textSmall)
+            x, topY + topH - dp(14f), textSmall)
 
         // ---- calibration banner ----
         if (fr.calibrating) {
             val bh = dp(56f)
-            val bt = m + topH + dp(10f)
+            val bt = topY + topH + dp(10f)
             panel(canvas, m, bt, w - m, bt + bh, dp(12f), Color.argb(215, 14, 16, 22))
             textBody.color = warn
             val msg = if (fr.faceFound) "CALIBRATING  -  keep your eyes OPEN"
@@ -284,8 +296,8 @@ class OverlayView @JvmOverloads constructor(
             bar(canvas, m + dp(14f), bt + dp(36f), w - 2 * m - dp(28f), dp(8f), frac, warn, null)
         }
 
-        // ---- bottom card, above the button row ----
-        val btnInset = dp(74f)
+        // ---- bottom card, above the button row (which sits above the gesture bar) ----
+        val btnInset = dp(74f) + insetBottom
         val cardH = dp(214f)
         val top = h - btnInset - cardH
         panel(canvas, m, top, w - m, h - btnInset, radius)

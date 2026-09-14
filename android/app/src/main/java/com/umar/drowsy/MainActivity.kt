@@ -18,6 +18,8 @@ import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
@@ -94,6 +96,23 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         ui = ActivityMainBinding.inflate(layoutInflater)
         setContentView(ui.root)
+
+        // Targeting Android 15 makes the app edge-to-edge whether it asks or
+        // not: the layout runs under the status bar and the gesture bar. The
+        // camera preview is welcome there, but the cards and the buttons are
+        // not - the clock sat on top of the status pill and the gesture
+        // handle on top of the buttons. Hand the bar heights to the overlay
+        // and pad the button row, and leave the preview full-bleed.
+        val pad8 = (8 * resources.displayMetrics.density).toInt()
+        val pad12 = (12 * resources.displayMetrics.density).toInt()
+        ViewCompat.setOnApplyWindowInsetsListener(ui.root) { _, insets ->
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            ui.overlay.setInsets(bars.top.toFloat(), bars.bottom.toFloat())
+            ui.buttons.setPadding(pad8, 0, pad8, pad12 + bars.bottom)
+            insets
+        }
 
         // DrowsyApp loaded the native library before this Activity existed.
         // If that failed, nothing below can work - every OpenCV call would
