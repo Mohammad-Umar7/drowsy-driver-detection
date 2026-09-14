@@ -116,6 +116,10 @@ class VideoSource:
         self._thread = None
         self._fail_count = 0
         self._ended = False      # a FILE source has run out of frames
+        # Playback pacing for files: the clip's own frame interval, and when
+        # the next frame is due.
+        self._file_dt = 0.0
+        self._next_due = None
 
         self._open()
         if self.threaded:
@@ -144,6 +148,12 @@ class VideoSource:
 
         if not self._cap.isOpened():
             return False
+
+        if self.is_file:
+            fps = float(self._cap.get(cv2.CAP_PROP_FPS) or 0.0)
+            # Some containers report 0 or nonsense; treat those as unpaced.
+            self._file_dt = 1.0 / fps if 1.0 <= fps <= 240.0 else 0.0
+            self._next_due = None
 
         if not self.is_file:
             # Ask OpenCV to hold a single frame. Support is driver-dependent
@@ -240,6 +250,22 @@ class VideoSource:
         cannot make us process the same frame twice.
         """
         if not self.threaded:
+            if self.is_file and self._file_dt > 0:
+                # Pace the file to its OWN frame rate. Every threshold in the
+                # detector is in seconds of wall-clock time, so a 30 fps clip
+                # consumed at 145 fps compresses a 2 s eye closure into 0.4 s
+                # and nothing ever fires - the recording is analysed at the
+                # wrong speed. Sleep until this frame is actually due; if we
+                # are already late (slow processing) do not sleep at all.
+                now = time.monotonic()
+                if self._next_due is None:
+                    self._next_due = now
+                delay = self._next_due - now
+                if delay > 0:
+                    time.sleep(delay)
+                # Advance from the due time, not from "now", so pacing does
+                # not drift by the sleep granularity on every frame.
+                self._next_due = max(self._next_due, now) + self._file_dt
             ok, frame = self._grab()
             if not ok and self.is_file:
                 # A file that returns no frame has simply finished. Without
@@ -298,6 +324,8 @@ class VideoSource:
             "video file" if self.is_file else "usb webcam")
         w, h = self.size
         bits = [f"{kind} {self.spec}", f"{w}x{h}"]
+        if self.is_file and self._file_dt > 0:
+            bits.append(f"{1.0 / self._file_dt:.0f} fps (paced)")
         if self.rotate:
             bits.append(f"rotated {self.rotate} deg")
         if self.mirror:
