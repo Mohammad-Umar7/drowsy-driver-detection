@@ -35,3 +35,4 @@ android/app/build/
 android/.idea/
 *.apk
 *.aab
+android/.kotlin/
