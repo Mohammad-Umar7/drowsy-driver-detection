@@ -6,7 +6,10 @@ This is the "classical computer vision" half of the project:
     MAR  -> how open is the mouth
     pose -> where is the head pointing
 
-Everything here is stateless: give it landmarks, get numbers back.
+Everything here is stateless -- give it landmarks, get numbers back -- with one
+deliberate exception: head_pose() remembers the previous frame's solution to
+seed the next solve (see _POSE_PREV), and face.py clears that memory whenever
+the face is lost.
 """
 import numpy as np
 import cv2
@@ -115,15 +118,40 @@ def head_pose(landmarks_px: np.ndarray, frame_shape) -> tuple:
                            [0, 0, 1.0]], dtype=np.float64)
     dist_coeffs = np.zeros((4, 1))
 
-    ok, rvec, _tvec = cv2.solvePnP(
-        MODEL_POINTS_3D, image_points, cam_matrix, dist_coeffs,
-        flags=cv2.SOLVEPNP_ITERATIVE)
+    # Seed the iterative solver with LAST frame's answer. The head moves only a
+    # little between consecutive frames, so the previous pose is an excellent
+    # starting point: the solver converges in fewer iterations and, more
+    # importantly, cannot flip to a mirror-image solution that is also a valid
+    # local minimum. Without the seed, pitch and yaw would occasionally jump
+    # by tens of degrees for a single frame - enough to fake a head nod.
+    guess = _POSE_PREV["rvec"] is not None
+    if guess:
+        rvec, tvec = _POSE_PREV["rvec"].copy(), _POSE_PREV["tvec"].copy()
+        ok, rvec, tvec = cv2.solvePnP(
+            MODEL_POINTS_3D, image_points, cam_matrix, dist_coeffs,
+            rvec, tvec, useExtrinsicGuess=True, flags=cv2.SOLVEPNP_ITERATIVE)
+    else:
+        ok, rvec, tvec = cv2.solvePnP(
+            MODEL_POINTS_3D, image_points, cam_matrix, dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE)
     if not ok:
+        _POSE_PREV["rvec"] = _POSE_PREV["tvec"] = None
         return 0.0, 0.0, 0.0
+    _POSE_PREV["rvec"], _POSE_PREV["tvec"] = rvec, tvec
 
     rot_mat, _ = cv2.Rodrigues(rvec)
     angles = cv2.RQDecomp3x3(rot_mat)[0]      # degrees, (x, y, z)
     return _wrap(angles[0]), _wrap(angles[1]), _wrap(angles[2])
+
+
+# Previous frame's pose, used to seed the next solve. Module-level because
+# head_pose() is a plain function; there is one driver, so one slot suffices.
+_POSE_PREV = {"rvec": None, "tvec": None}
+
+
+def reset_pose_seed():
+    """Forget the previous pose, e.g. after the face has been lost."""
+    _POSE_PREV["rvec"] = _POSE_PREV["tvec"] = None
 
 
 def _wrap(a) -> float:

@@ -84,6 +84,10 @@ class FaceTracker:
         rgb.flags.writeable = False
         res = self._mesh.process(rgb)
         if not res.multi_face_landmarks:
+            # Forget the previous head pose. The next face to appear may be a
+            # different person or a very different pose, and seeding the PnP
+            # solver from a stale answer would start it in the wrong basin.
+            G.reset_pose_seed()
             return None
 
         # Landmarks come back NORMALISED to [0,1]; scale to pixels.
