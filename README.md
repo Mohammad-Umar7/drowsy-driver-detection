@@ -210,7 +210,7 @@ more valuable than reporting only the headline number.
 |---|---|---|
 | ![training](reports/training_curves.png) | ![confusion](reports/confusion_matrix.png) | ![roc](reports/roc_curve.png) |
 
-The temporal state machine is covered by 53 simulated-time tests
+The temporal state machine is covered by 67 simulated-time tests
 (`tests/test_drowsiness.py`) that verify normal blinking does **not** alarm,
 a sustained closure **does**, talking is not mistaken for yawning, and the
 verdict is identical at 10, 30 and 60 FPS:
@@ -227,7 +227,7 @@ verdict is identical at 10, 30 and 60 FPS:
 [12] PERCLOS must not fire before 12 s of data exist
       PASS  PERCLOS 34% ignored: PERCLOS warming up (4/12s)
 
-53 passed, 0 failed
+67 passed, 0 failed
 ```
 
 Every duration in the tests is read from `config.py` rather than hard-coded, so
@@ -324,7 +324,7 @@ scripts/
   export_onnx.py   PyTorch -> ONNX for the phone, with parity verification
   check_port_parity.py  guards the Kotlin port against silent drift
 tests/
-  test_drowsiness.py   26 simulated-time tests, no webcam required
+  test_drowsiness.py   67 simulated-time tests, no webcam required
 docs/
   01-foundations.md       images, pixels, landmarks, EAR — assumes zero background
   02-cnn-explained.md     what a CNN and a kernel are, worked with real numbers
