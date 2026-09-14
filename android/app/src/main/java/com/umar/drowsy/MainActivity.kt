@@ -117,13 +117,39 @@ class MainActivity : AppCompatActivity() {
             ui.btnAlarm.text = if (on) "Mute" else "Unmute"
         }
 
-        // No stored calibration yet, so measure this driver straight away
-        // rather than relying on them remembering to press a button.
-        calibrator.start()
+        // Reuse a saved calibration if one exists; otherwise measure this
+        // driver straight away rather than relying on them remembering to
+        // press a button. Desktop has saved its threshold to calibration.json
+        // since day one; the phone was re-calibrating from scratch on every
+        // launch and forgetting the result the moment the app closed.
+        val saved = loadEarThresh()
+        if (saved != null) {
+            earThresh = saved
+            monitor.earThresh = saved
+            Toast.makeText(this, "Using saved calibration (EAR %.3f)".format(saved),
+                Toast.LENGTH_SHORT).show()
+        } else {
+            calibrator.start()
+        }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             == PackageManager.PERMISSION_GRANTED) startCamera()
         else permission.launch(Manifest.permission.CAMERA)
+    }
+
+    // ---- calibration persistence --------------------------------------
+    // The threshold is a property of the DRIVER's eyes, not of one session.
+    private fun prefs() = getSharedPreferences("drowsy", MODE_PRIVATE)
+
+    private fun loadEarThresh(): Double? {
+        val v = prefs().getFloat(PREF_EAR, -1f)
+        // Sanity-bounded: a corrupted or absurd value must not lock the
+        // detector into a state where no real eye can ever trip it.
+        return if (v in 0.05f..0.6f) v.toDouble() else null
+    }
+
+    private fun saveEarThresh(v: Double) {
+        prefs().edit().putFloat(PREF_EAR, v.toFloat()).apply()
     }
 
     private fun setupLandmarker() {
@@ -268,6 +294,7 @@ class MainActivity : AppCompatActivity() {
                 if (reliable) calibrator.feed(ear, now)?.let {
                     earThresh = it
                     monitor.earThresh = it
+                    saveEarThresh(it)
                     runOnUiThread {
                         Toast.makeText(this,
                             "Calibrated: EAR threshold %.3f".format(it),
@@ -399,5 +426,8 @@ class MainActivity : AppCompatActivity() {
         lighting.release()
     }
 
-    companion object { private const val TAG = "Drowsy" }
+    companion object {
+        private const val TAG = "Drowsy"
+        private const val PREF_EAR = "ear_thresh"
+    }
 }
