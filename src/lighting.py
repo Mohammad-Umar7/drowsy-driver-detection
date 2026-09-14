@@ -57,6 +57,7 @@ AFTER MediaPipe has located the face. In the dark MediaPipe finds no face at
 all, so there is no crop to enhance. This stage runs first, on the full frame,
 so that landmark detection gets something workable.
 """
+import functools
 from dataclasses import dataclass
 from enum import IntEnum
 
@@ -90,11 +91,6 @@ class LightStats:
     clipped_low: float      # fraction at/near 0
     contrast: float         # p95 - p5, how much of the range is actually used
     gamma: float            # what we applied (1.0 = untouched)
-
-
-# Tuned for a target mid-grey. 118 sits slightly below true mid (128) because
-# faces read better a touch darker than a flat grey card.
-TARGET_MEAN = 118.0
 
 
 def _stats(l_chan: np.ndarray) -> tuple:
@@ -140,7 +136,7 @@ def classify(mean, face_mean, contrast, clipped_high, clipped_low) -> Light:
 
 # A frame anywhere in this band is already well exposed and is LEFT ALONE.
 #
-# Without this dead band, auto_gamma forced every frame to exactly TARGET_MEAN,
+# Without this dead band, auto_gamma forced every frame to exactly one target,
 # so a perfectly good bright scene at mean 183 was darkened with gamma 2.19 --
 # the clamp ceiling -- for no benefit. It also pushed such frames away from the
 # statistics the model was trained on, which is why sunlit frames measured
@@ -173,9 +169,15 @@ def auto_gamma(mean: float, low: float = COMFORT_LOW,
     return float(np.clip(g, 0.35, 2.2))
 
 
+@functools.lru_cache(maxsize=64)
 def _gamma_lut(gamma: float) -> np.ndarray:
     """
     Precompute all 256 outputs once, then map the image through the table.
+
+    Cached by value: the caller rounds gamma to 2 decimals first. Rounding to
+    3 was measured to miss on EVERY frame while gamma eases toward its
+    target, so the cache did nothing; at 2 decimals the visual difference
+    is nil and consecutive frames share a key.
 
     A lookup table turns a per-pixel power operation (expensive, ~1M of them
     per frame) into a single memory lookup. On a 720p frame this is the
@@ -232,7 +234,7 @@ class LightingNormalizer:
         g = self._gamma
 
         if abs(g - 1.0) > 0.03:
-            l = cv2.LUT(l, _gamma_lut(g))
+            l = cv2.LUT(l, _gamma_lut(round(g, 2)))
 
         # Strong local contrast where the image is genuinely poor, gentle
         # otherwise. Running the strong setting on an already-good frame just
