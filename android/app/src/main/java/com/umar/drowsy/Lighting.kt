@@ -77,10 +77,10 @@ class LightingNormalizer(var enabled: Boolean = true) {
     // megabytes and hand the garbage collector work during the frame budget.
     private val bgr = Mat()
     private val lab = Mat()
+    private val l = Mat()
     private val small = Mat()
     private val lut = Mat(1, 256, CvType.CV_8U)
     private val lutData = ByteArray(256)
-    private val channels = ArrayList<Mat>(3)
     private val smallBuf = ByteArray(160 * 90)
     private val hist = IntArray(256)
 
@@ -122,10 +122,11 @@ class LightingNormalizer(var enabled: Boolean = true) {
         // lightness alone, so brightness moves and hue does not.
         Imgproc.cvtColor(bgr, lab, Imgproc.COLOR_BGR2Lab)
 
-        channels.forEach { it.release() }
-        channels.clear()
-        Core.split(lab, channels)
-        val l = channels[0]
+        // Pull out L only. Core.split would hand back three freshly
+        // allocated Mats every frame - the A and B planes among them, which
+        // are never touched - and that contradicted the "allocated once"
+        // promise above: ~2.7 MB of churn per 720p frame for nothing.
+        Core.extractChannel(lab, l, 0)
 
         // Histogram summary on a downscaled copy: we need the distribution's
         // shape, not precision, and doing this at full resolution every frame
@@ -201,7 +202,7 @@ class LightingNormalizer(var enabled: Boolean = true) {
             Imgproc.medianBlur(l, l, 3)
         }
 
-        Core.merge(channels, lab)
+        Core.insertChannel(l, lab, 0)
         Imgproc.cvtColor(lab, bgr, Imgproc.COLOR_Lab2BGR)
         Imgproc.cvtColor(bgr, rgba, Imgproc.COLOR_BGR2RGBA)
 
@@ -237,8 +238,6 @@ class LightingNormalizer(var enabled: Boolean = true) {
     fun toggle(): Boolean { enabled = !enabled; return enabled }
 
     fun release() {
-        bgr.release(); lab.release(); small.release(); lut.release()
-        channels.forEach { it.release() }
-        channels.clear()
+        bgr.release(); lab.release(); l.release(); small.release(); lut.release()
     }
 }
