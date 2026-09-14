@@ -227,6 +227,13 @@ class LightingNormalizer(var enabled: Boolean = true) {
         else -> Light.NORMAL
     }
 
+    /**
+     * Forget the eased gamma. Call when the scene changes discontinuously -
+     * a camera switch, for instance - so the next frame is not corrected
+     * with a value tuned for a different picture.
+     */
+    fun reset() { gammaNow = 1.0 }
+
     fun toggle(): Boolean { enabled = !enabled; return enabled }
 
     fun release() {

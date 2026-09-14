@@ -110,6 +110,12 @@ class MainActivity : AppCompatActivity() {
         ui.btnSwitch.setOnClickListener {
             lensFacing = if (lensFacing == CameraSelector.LENS_FACING_FRONT)
                 CameraSelector.LENS_FACING_BACK else CameraSelector.LENS_FACING_FRONT
+            // The other camera is a different sensor pointed at a different
+            // scene: the eased gamma and the rolling FPS window both describe
+            // the OLD one and would be wrong for the first second of the new.
+            lighting.reset()
+            frameTimes.clear()
+            lastFrameT = 0.0
             startCamera()
         }
         ui.btnAlarm.setOnClickListener {
