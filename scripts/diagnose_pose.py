@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import CFG                       # noqa: E402
 from src.face import FaceTracker                 # noqa: E402
 from src.model import build_model                # noqa: E402
+from src.source import VideoSource               # noqa: E402
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 
@@ -58,10 +59,13 @@ def main():
     model.load_state_dict(ck["model"])
 
     tracker = FaceTracker(CFG.data.img_size, CFG.data.crop_margin)
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
-    if not cap.isOpened():
+    # VideoSource, not a raw VideoCapture at 960x540. This camera does not
+    # support 960x540 and silently returned 640x480 instead, so the very tool
+    # meant to diagnose small-eye problems was itself running at half the
+    # resolution of the app it was diagnosing. VideoSource requests a mode the
+    # camera supports, reports what it actually got, and mirrors for us.
+    cap = VideoSource(0, 1280, 720)
+    if not cap.opened:
         sys.exit("could not open the camera")
 
     WIN = "Diagnostic - follow the instruction"
@@ -81,7 +85,6 @@ def main():
             ok, frame = cap.read()
             if not ok:
                 continue
-            frame = cv2.flip(frame, 1)
             left = 3.0 - (time.time() - t0)
             cv2.rectangle(frame, (0, 0), (frame.shape[1], 96), (0, 0, 0), -1)
             cv2.putText(frame, label, (16, 38), FONT, 0.7, (0, 230, 255), 2,
@@ -98,7 +101,6 @@ def main():
             ok, frame = cap.read()
             if not ok:
                 continue
-            frame = cv2.flip(frame, 1)
             obs = tracker.process(frame)
 
             if obs is not None:
