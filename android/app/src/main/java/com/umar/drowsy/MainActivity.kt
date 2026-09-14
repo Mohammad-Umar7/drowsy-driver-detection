@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.RectF
 import android.os.Bundle
 import android.util.Log
+import android.util.Size
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -13,6 +14,8 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import com.google.mediapipe.framework.image.BitmapImageBuilder
@@ -189,6 +192,24 @@ class MainActivity : AppCompatActivity() {
                 it.setSurfaceProvider(ui.preview.surfaceProvider)
             }
             val analysis = ImageAnalysis.Builder()
+                // Ask for 720p. Left to itself, ImageAnalysis delivers 640x480
+                // - CameraX's documented default - which is the exact mode the
+                // desktop version had to fight: at 640x480 an eye at driving
+                // distance is ~23 px wide, the eyelid is a few pixels tall,
+                // and a 2 px landmark error becomes a 30% error in EAR. The
+                // phone was quietly running at half the resolution of the
+                // desktop it was ported from. Fall back to the closest mode
+                // this sensor supports if 1280x720 is not offered.
+                .setResolutionSelector(
+                    ResolutionSelector.Builder()
+                        .setResolutionStrategy(
+                            ResolutionStrategy(
+                                Size(1280, 720),
+                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                            )
+                        )
+                        .build()
+                )
                 // The same principle as the desktop VideoSource: process the
                 // NEWEST frame and drop anything that queued up behind it.
                 // For a real-time safety signal, fresh beats complete.
