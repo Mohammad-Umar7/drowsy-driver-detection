@@ -24,6 +24,9 @@ object Cfg {
     // blink / microsleep
     const val MICROSLEEP_SEC = 2.0
     const val BLINK_MAX_SEC = 0.45
+    // Closures between a blink and a microsleep: blink duration climbing is
+    // one of the earliest fatigue signs, and was previously dropped.
+    const val LONG_BLINK_RATE_WARN = 3
 
     // PERCLOS
     const val PERCLOS_WINDOW_SEC = 30.0
@@ -70,6 +73,8 @@ data class DrowsyState(
     val closureSec: Double = 0.0,
     val microsleep: Boolean = false,
     val blinks: Int = 0,
+    val longBlinks: Int = 0,
+    val longBlinkRate: Double = 0.0,
     val yawns: Int = 0,
     val yawning: Boolean = false,
     val nodding: Boolean = false,
@@ -100,6 +105,7 @@ class DrowsinessMonitor(
     private val window = ArrayDeque<Sample>()
     private val yawnTimes = ArrayDeque<Double>()
     private val blinkTimes = ArrayDeque<Double>()
+    private val longBlinkTimes = ArrayDeque<Double>()
 
     private var lastT: Double? = null
     private var closedSince: Double? = null
@@ -113,16 +119,17 @@ class DrowsinessMonitor(
     private var lastDistractAlarmT = 0.0
 
     var blinks = 0; private set
+    var longBlinks = 0; private set
     var yawns = 0; private set
     var state = DrowsyState(); private set
 
     fun reset() {
-        window.clear(); yawnTimes.clear(); blinkTimes.clear()
+        window.clear(); yawnTimes.clear(); blinkTimes.clear(); longBlinkTimes.clear()
         lastT = null; closedSince = null; yawnSince = null
         nodSince = null; distractSince = null; lastFaceT = null
         lostSince = null; levelAtLoss = Level.AWAKE
         lastAlarmT = 0.0; lastDistractAlarmT = 0.0
-        blinks = 0; yawns = 0
+        blinks = 0; longBlinks = 0; yawns = 0
         state = DrowsyState()
     }
 
@@ -154,6 +161,7 @@ class DrowsinessMonitor(
         val cutY = now - Cfg.YAWN_WINDOW_SEC
         while (yawnTimes.isNotEmpty() && yawnTimes.first() < cutY) yawnTimes.removeFirst()
         while (blinkTimes.isNotEmpty() && blinkTimes.first() < cutY) blinkTimes.removeFirst()
+        while (longBlinkTimes.isNotEmpty() && longBlinkTimes.first() < cutY) longBlinkTimes.removeFirst()
     }
 
     fun update(
@@ -215,9 +223,9 @@ class DrowsinessMonitor(
                 }
             }
 
-            state = DrowsyState(level = level, blinks = blinks, yawns = yawns,
-                reasons = reasons, shouldAlarm = shouldAlarm, alarmKind = alarmKind,
-                eyesReliable = false)
+            state = DrowsyState(level = level, blinks = blinks, longBlinks = longBlinks,
+                yawns = yawns, reasons = reasons, shouldAlarm = shouldAlarm,
+                alarmKind = alarmKind, eyesReliable = false)
             return state
         }
 
@@ -256,6 +264,9 @@ class DrowsinessMonitor(
             closedSince?.let {
                 val len = now - it
                 if (len <= Cfg.BLINK_MAX_SEC) { blinks++; blinkTimes.addLast(now) }
+                // Too long for a blink, too short for a microsleep: previously
+                // this fell through both branches and was forgotten.
+                else if (len < Cfg.MICROSLEEP_SEC) { longBlinks++; longBlinkTimes.addLast(now) }
             }
             closedSince = null
         }
@@ -314,6 +325,10 @@ class DrowsinessMonitor(
         if (yawnTimes.size >= Cfg.YAWN_RATE_WARN) {
             raise(Level.DROWSY); reasons.add("${yawnTimes.size} yawns/min")
         }
+        val nLong = longBlinkTimes.size
+        if (nLong >= Cfg.LONG_BLINK_RATE_WARN) {
+            raise(Level.DROWSY); reasons.add("$nLong long blinks/min")
+        }
         if (nodding) { raise(Level.DROWSY); reasons.add("head nodding") }
         if (distracted && level.rank < Level.DROWSY.rank) {
             raise(Level.DISTRACTED); reasons.add("looking away (%+.0f deg)".format(yaw))
@@ -338,6 +353,8 @@ class DrowsinessMonitor(
             level = level, closed = closed, closedScore = score, perclos = perclos,
             closureSec = closureSec, microsleep = microsleep,
             blinks = blinks, yawns = yawns, yawning = yawning,
+            longBlinks = longBlinks,
+            longBlinkRate = nLong * 60.0 / Cfg.YAWN_WINDOW_SEC,
             nodding = nodding, distracted = distracted, eyesReliable = eyesReliable,
             reasons = if (reasons.isEmpty()) listOf("normal") else reasons,
             shouldAlarm = shouldAlarm, alarmKind = alarmKind
