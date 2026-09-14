@@ -84,7 +84,11 @@ class EyeClassifier(context: Context) {
         if (x1 <= x0 || y1 <= y0) return Mat.zeros(1, 1, CvType.CV_8UC1)
 
         val roi = Mat(grayFrame, Rect(x0, y0, x1 - x0, y1 - y0))
-        if (padL or padT or padR or padB == 0) return roi
+        // Written out in full. The previous form, `padL or padT or padR or
+        // padB == 0`, happened to be correct only because Kotlin binds infix
+        // `or` tighter than `==` -- so it bitwise-OR'd all four and compared
+        // the result to zero. Correct by accident is not correct.
+        if (padL == 0 && padT == 0 && padR == 0 && padB == 0) return roi
         val padded = Mat()
         Core.copyMakeBorder(roi, padded, padT, padB, padL, padR, Core.BORDER_REPLICATE)
         roi.release()
