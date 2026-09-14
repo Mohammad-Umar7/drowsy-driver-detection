@@ -60,13 +60,23 @@ class MainActivity : AppCompatActivity() {
     private val frameTimes = ArrayDeque<Double>()
     private var lastFrameT = 0.0
 
-    private val lighting = LightingNormalizer()
+    // Everything backed by OpenCV native memory is created in onCreate, after
+    // the library is confirmed loaded - never as a field initializer.
+    //
+    // Field initializers run while the Activity object is being constructed,
+    // BEFORE onCreate. `Mat()` and `createCLAHE` are native calls, and with
+    // the library loaded in onCreate they ran first and threw
+    // UnsatisfiedLinkError: the app crashed on every launch. The build was
+    // green the whole time; only running it on a device showed it. DrowsyApp
+    // now loads OpenCV before any Activity exists, and these stay lateinit so
+    // a device where that load fails gets a message instead of a crash.
+    private lateinit var lighting: LightingNormalizer
 
     // Allocated once and reused. Creating a Bitmap or Mat inside a 30 fps loop
     // churns megabytes per second and hands the garbage collector work inside
     // the frame budget, which is what makes camera apps stutter.
-    private val uprightMat = Mat()
-    private val grayMat = Mat()
+    private lateinit var uprightMat: Mat
+    private lateinit var grayMat: Mat
     private var uprightBitmap: Bitmap? = null
 
     // MediaPipe's VIDEO mode requires STRICTLY increasing timestamps. Two
@@ -85,13 +95,18 @@ class MainActivity : AppCompatActivity() {
         ui = ActivityMainBinding.inflate(layoutInflater)
         setContentView(ui.root)
 
-        // initLocal() loads the bundled native libs. Without this every OpenCV
-        // call throws UnsatisfiedLinkError, so fail loudly rather than crash
-        // later in the frame loop.
-        if (!OpenCVLoader.initLocal()) {
+        // DrowsyApp loaded the native library before this Activity existed.
+        // If that failed, nothing below can work - every OpenCV call would
+        // throw UnsatisfiedLinkError - so leave cleanly instead of crashing.
+        if (!DrowsyApp.opencvReady && !OpenCVLoader.initLocal()) {
             Toast.makeText(this, "OpenCV failed to load", Toast.LENGTH_LONG).show()
-            Log.e(TAG, "OpenCVLoader.initLocal() returned false")
+            Log.e(TAG, "OpenCV native library unavailable")
+            finish()
+            return
         }
+        lighting = LightingNormalizer()
+        uprightMat = Mat()
+        grayMat = Mat()
 
         analysisExecutor = Executors.newSingleThreadExecutor()
         alarm = Alarm(this)
@@ -462,6 +477,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // onCreate bails out before any of this exists if OpenCV fails to load.
+        if (!::analysisExecutor.isInitialized) return
         // ORDER MATTERS. shutdown() only refuses NEW work; a frame already
         // executing keeps running. Closing the landmarker and the ONNX session
         // underneath that in-flight frame is a use-after-free in native code -

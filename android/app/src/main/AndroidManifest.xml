@@ -30,6 +30,7 @@
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
 
     <application
+        android:name=".DrowsyApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
