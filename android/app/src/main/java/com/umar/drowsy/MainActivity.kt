@@ -260,7 +260,12 @@ class MainActivity : AppCompatActivity() {
                     closedProb = usable.maxOrNull()
                 }
 
-                calibrator.feed(ear, now)?.let {
+                // Only feed the calibrator when the eyes are actually readable.
+                // With the head turned, `ear` is the "nothing trustworthy"
+                // fallback, and a value like the 1.05 measured from a 4 px eye
+                // would poison the median and set a threshold no real eye
+                // could ever fall below - the detector could never fire again.
+                if (reliable) calibrator.feed(ear, now)?.let {
                     earThresh = it
                     monitor.earThresh = it
                     runOnUiThread {
