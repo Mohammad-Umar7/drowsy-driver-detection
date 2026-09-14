@@ -114,6 +114,19 @@ def _stats(l_chan: np.ndarray) -> tuple:
     return mean, face_mean, float(p95 - p5), clipped_high, clipped_low
 
 
+# The classifier's decision boundaries. Named, rather than inline, so that
+# scripts/check_port_parity.py can compare them against Lighting.kt - the
+# Kotlin port once dropped the contrast term below and nothing noticed.
+BACKLIT_CLIP_FRAC = 0.12    # this much of the frame clipped at white...
+BACKLIT_FACE_DROP = 25.0    # ...while the centre is this much darker than the mean
+DARK_MEAN = 45.0
+DARK_FACE_MEAN = 40.0
+DARK_MIN_CONTRAST = 60.0
+DIM_MEAN = 80.0
+BRIGHT_MEAN = 185.0
+BRIGHT_CLIP_FRAC = 0.28
+
+
 def classify(mean, face_mean, contrast, clipped_high, clipped_low) -> Light:
     """
     Decide which regime we are in.
@@ -123,13 +136,14 @@ def classify(mean, face_mean, contrast, clipped_high, clipped_low) -> Light:
     is in deep shadow. Only comparing the centre against the whole frame
     catches it.
     """
-    if clipped_high > 0.12 and face_mean < mean - 25:
+    if clipped_high > BACKLIT_CLIP_FRAC and face_mean < mean - BACKLIT_FACE_DROP:
         return Light.BACKLIT
-    if mean < 45 or (face_mean < 40 and contrast < 60):
+    if mean < DARK_MEAN or (face_mean < DARK_FACE_MEAN
+                            and contrast < DARK_MIN_CONTRAST):
         return Light.DARK
-    if mean < 80:
+    if mean < DIM_MEAN:
         return Light.DIM
-    if mean > 185 or clipped_high > 0.28:
+    if mean > BRIGHT_MEAN or clipped_high > BRIGHT_CLIP_FRAC:
         return Light.BRIGHT
     return Light.NORMAL
 
@@ -147,6 +161,13 @@ def classify(mean, face_mean, contrast, clipped_high, clipped_low) -> Light:
 # hovering at the boundary cannot flicker between corrected and uncorrected.
 COMFORT_LOW = 85.0
 COMFORT_HIGH = 165.0
+GAMMA_MIN = 0.35
+GAMMA_MAX = 2.2
+GAMMA_DEADBAND = 0.03       # |gamma - 1| below this: skip the LUT entirely
+GAMMA_SMOOTH = 0.12         # easing per frame toward the target gamma
+CLAHE_STRONG_CLIP = 3.0
+CLAHE_SOFT_CLIP = 1.6
+CLAHE_TILES = 8
 
 
 def auto_gamma(mean: float, low: float = COMFORT_LOW,
@@ -158,15 +179,15 @@ def auto_gamma(mean: float, low: float = COMFORT_LOW,
     Derivation: we want (mean/255) ** gamma == target/255, so taking logs of
     both sides and rearranging gives the expression below.
 
-    Clamped to [0.35, 2.2]. An unclamped gamma on a nearly black frame goes
-    enormous and amplifies pure sensor noise into a grey blizzard.
+    Clamped to [GAMMA_MIN, GAMMA_MAX]. An unclamped gamma on a nearly black
+    frame goes enormous and amplifies pure sensor noise into a grey blizzard.
     """
     mean = float(np.clip(mean, 4.0, 250.0))
     if low <= mean <= high:
         return 1.0
     target = low if mean < low else high
     g = np.log(target / 255.0) / np.log(mean / 255.0)
-    return float(np.clip(g, 0.35, 2.2))
+    return float(np.clip(g, GAMMA_MIN, GAMMA_MAX))
 
 
 @functools.lru_cache(maxsize=64)
@@ -198,12 +219,15 @@ class LightingNormalizer:
     the correction tracks real lighting changes but ignores flicker.
     """
 
-    def __init__(self, enabled: bool = True, smooth: float = 0.12):
+    def __init__(self, enabled: bool = True, smooth: float = GAMMA_SMOOTH):
         self.enabled = enabled
         self.smooth = smooth            # 0..1, lower = steadier
         self._gamma = 1.0
-        self._clahe_strong = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        self._clahe_soft = cv2.createCLAHE(clipLimit=1.6, tileGridSize=(8, 8))
+        tiles = (CLAHE_TILES, CLAHE_TILES)
+        self._clahe_strong = cv2.createCLAHE(clipLimit=CLAHE_STRONG_CLIP,
+                                             tileGridSize=tiles)
+        self._clahe_soft = cv2.createCLAHE(clipLimit=CLAHE_SOFT_CLIP,
+                                           tileGridSize=tiles)
         self.stats = LightStats(Light.NORMAL, 0, 0, 0, 0, 0, 1.0)
 
     def __call__(self, frame: np.ndarray) -> np.ndarray:
@@ -233,7 +257,7 @@ class LightingNormalizer:
         self._gamma += (target - self._gamma) * self.smooth
         g = self._gamma
 
-        if abs(g - 1.0) > 0.03:
+        if abs(g - 1.0) > GAMMA_DEADBAND:
             l = cv2.LUT(l, _gamma_lut(round(g, 2)))
 
         # Strong local contrast where the image is genuinely poor, gentle

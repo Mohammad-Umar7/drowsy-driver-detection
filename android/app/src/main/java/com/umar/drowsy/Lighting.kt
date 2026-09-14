@@ -35,6 +35,38 @@ import kotlin.math.pow
  * would be too late: in the dark there is no face to find, so there is no crop.
  */
 
+/**
+ * Every number the lighting stage decides with, mirrored from src/lighting.py.
+ *
+ * scripts/check_port_parity.py compares these against the Python by name, for
+ * the same reason it compares the drowsiness thresholds: the first port of
+ * this file silently dropped the contrast term from the DARK rule and nothing
+ * - no crash, no test - said so. Inline literals cannot be checked; named
+ * constants can.
+ */
+object LightCfg {
+    // exposure
+    const val COMFORT_LOW = 85.0
+    const val COMFORT_HIGH = 165.0
+    const val GAMMA_MIN = 0.35
+    const val GAMMA_MAX = 2.2
+    const val GAMMA_DEADBAND = 0.03
+    const val GAMMA_SMOOTH = 0.12
+    const val CLAHE_STRONG_CLIP = 3.0
+    const val CLAHE_SOFT_CLIP = 1.6
+    const val CLAHE_TILES = 8
+
+    // classification
+    const val BACKLIT_CLIP_FRAC = 0.12
+    const val BACKLIT_FACE_DROP = 25.0
+    const val DARK_MEAN = 45.0
+    const val DARK_FACE_MEAN = 40.0
+    const val DARK_MIN_CONTRAST = 60.0
+    const val DIM_MEAN = 80.0
+    const val BRIGHT_MEAN = 185.0
+    const val BRIGHT_CLIP_FRAC = 0.28
+}
+
 enum class Light(val text: String) {
     DARK("NIGHT"),
     DIM("DIM"),
@@ -62,15 +94,16 @@ class LightingNormalizer(var enabled: Boolean = true) {
     // Correcting only toward the nearest EDGE also keeps gamma continuous: at
     // mean == COMFORT_LOW the correction is exactly 1.0, so a frame hovering
     // at the boundary cannot flicker between corrected and uncorrected.
-    private val comfortLow = 85.0
-    private val comfortHigh = 165.0
-    private val smooth = 0.12
+    private val comfortLow = LightCfg.COMFORT_LOW
+    private val comfortHigh = LightCfg.COMFORT_HIGH
+    private val smooth = LightCfg.GAMMA_SMOOTH
 
     private var gammaNow = 1.0
     var stats = LightStats(); private set
 
-    private val claheStrong: CLAHE = Imgproc.createCLAHE(3.0, Size(8.0, 8.0))
-    private val claheSoft: CLAHE = Imgproc.createCLAHE(1.6, Size(8.0, 8.0))
+    private val tiles = Size(LightCfg.CLAHE_TILES.toDouble(), LightCfg.CLAHE_TILES.toDouble())
+    private val claheStrong: CLAHE = Imgproc.createCLAHE(LightCfg.CLAHE_STRONG_CLIP, tiles)
+    private val claheSoft: CLAHE = Imgproc.createCLAHE(LightCfg.CLAHE_SOFT_CLIP, tiles)
 
     // Every Mat is allocated once. Allocating inside a 30 fps loop is what
     // makes Android apps stutter: each frame would otherwise churn several
@@ -97,7 +130,7 @@ class LightingNormalizer(var enabled: Boolean = true) {
         if (m in comfortLow..comfortHigh) return 1.0
         val target = if (m < comfortLow) comfortLow else comfortHigh
         val g = ln(target / 255.0) / ln(m / 255.0)
-        return g.coerceIn(0.35, 2.2)
+        return g.coerceIn(LightCfg.GAMMA_MIN, LightCfg.GAMMA_MAX)
     }
 
     private fun buildLut(gamma: Double) {
@@ -185,7 +218,7 @@ class LightingNormalizer(var enabled: Boolean = true) {
         // image, jittering the landmarks and faking blinks through EAR wobble.
         gammaNow += (target - gammaNow) * smooth
 
-        if (kotlin.math.abs(gammaNow - 1.0) > 0.03) {
+        if (kotlin.math.abs(gammaNow - 1.0) > LightCfg.GAMMA_DEADBAND) {
             buildLut(gammaNow)
             Core.LUT(l, lut, l)
         }
@@ -218,13 +251,16 @@ class LightingNormalizer(var enabled: Boolean = true) {
     private fun classify(
         mean: Double, faceMean: Double, contrast: Double, hiFrac: Double
     ): Light = when {
-        hiFrac > 0.12 && faceMean < mean - 25 -> Light.BACKLIT
+        hiFrac > LightCfg.BACKLIT_CLIP_FRAC &&
+            faceMean < mean - LightCfg.BACKLIT_FACE_DROP -> Light.BACKLIT
         // The contrast term matters: without it a normally-lit frame whose
         // CENTRE happens to be dark - dark clothing, a beard, a shadow - is
         // misread as night and gets median-blurred for no reason.
-        mean < 45 || (faceMean < 40 && contrast < 60) -> Light.DARK
-        mean < 80 -> Light.DIM
-        mean > 185 || hiFrac > 0.28 -> Light.BRIGHT
+        mean < LightCfg.DARK_MEAN ||
+            (faceMean < LightCfg.DARK_FACE_MEAN &&
+                contrast < LightCfg.DARK_MIN_CONTRAST) -> Light.DARK
+        mean < LightCfg.DIM_MEAN -> Light.DIM
+        mean > LightCfg.BRIGHT_MEAN || hiFrac > LightCfg.BRIGHT_CLIP_FRAC -> Light.BRIGHT
         else -> Light.NORMAL
     }
 

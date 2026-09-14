@@ -41,9 +41,20 @@ sys.path.insert(0, str(ROOT))
 
 from src.config import DrowsyCfg          # noqa: E402
 from src import geometry as G             # noqa: E402
+from src import lighting as L             # noqa: E402
 
 KT_DROWSY = ROOT / "android/app/src/main/java/com/umar/drowsy/Drowsiness.kt"
 KT_GEOM = ROOT / "android/app/src/main/java/com/umar/drowsy/Geometry.kt"
+KT_LIGHT = ROOT / "android/app/src/main/java/com/umar/drowsy/Lighting.kt"
+
+# The lighting stage's decision constants. lighting.py defines each as a
+# module-level name; Lighting.kt keeps the same names in `object LightCfg`.
+LIGHT_CONSTS = [
+    "COMFORT_LOW", "COMFORT_HIGH", "GAMMA_MIN", "GAMMA_MAX", "GAMMA_DEADBAND",
+    "GAMMA_SMOOTH", "CLAHE_STRONG_CLIP", "CLAHE_SOFT_CLIP", "CLAHE_TILES",
+    "BACKLIT_CLIP_FRAC", "BACKLIT_FACE_DROP", "DARK_MEAN", "DARK_FACE_MEAN",
+    "DARK_MIN_CONTRAST", "DIM_MEAN", "BRIGHT_MEAN", "BRIGHT_CLIP_FRAC",
+]
 
 # Desktop-only settings with no phone equivalent, and why.
 SKIP = {
@@ -154,6 +165,26 @@ def main():
     else:
         problems.append(f"MODEL_POINTS_3D: {len(G.MODEL_POINTS_3D)} points in "
                         f"python, {len(kt_pts)} in kotlin")
+
+    # ---- 4. the lighting stage ---------------------------------------
+    # This is the file whose port drifted first (the dropped contrast term),
+    # and until now nothing here looked at it.
+    print("\nlighting constants  (lighting.py  vs  Lighting.kt LightCfg)")
+    print("-" * 66)
+    kt_light = parse_kotlin_consts(KT_LIGHT)
+    for name in LIGHT_CONSTS:
+        py_val = getattr(L, name)
+        checked += 1
+        if name not in kt_light:
+            problems.append(f"{name}: MISSING from Lighting.kt")
+            print(f"  {name:26s} {py_val!s:>8}  ->  MISSING")
+            continue
+        kt_val = kt_light[name]
+        same = abs(float(py_val) - float(kt_val)) < 1e-9
+        print(f"  {name:26s} {py_val!s:>8}  ->  {kt_val!s:<8} "
+              f"{'ok' if same else 'MISMATCH'}")
+        if not same:
+            problems.append(f"{name}: python {py_val} != kotlin {kt_val}")
 
     # ---- verdict -----------------------------------------------------
     print("\n" + "=" * 66)
