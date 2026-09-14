@@ -374,6 +374,11 @@ def main():
                 break
             continue
 
+        if lost_since is not None:
+            # Back after an outage. The eased gamma was tuned for the scene
+            # BEFORE the drop; the reconnected stream may be a different
+            # exposure entirely, so start the correction from neutral.
+            lighting.reset()
         lost_since = None
         last_frame = frame
         n_frames += 1

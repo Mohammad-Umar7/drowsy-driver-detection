@@ -165,7 +165,7 @@ def main():
     rows, tiles = [], []
     for name, img in conditions:
         off = measure(img, tracker, model, device, None)
-        norm._gamma = 1.0                      # fresh start per condition
+        norm.reset()                           # fresh start per condition
         on = measure(img, tracker, model, device, norm)
         rows.append((name, off, on))
         tiles.append((name, norm.process(img)))

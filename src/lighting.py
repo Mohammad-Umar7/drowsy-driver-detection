@@ -254,6 +254,15 @@ class LightingNormalizer:
         self.stats = LightStats(cond, mean, face_mean, hi, lo, contrast, g)
         return out
 
+    def reset(self):
+        """
+        Forget the eased gamma. Call this when the scene changes
+        discontinuously - a reconnect, a camera switch, a benchmark
+        condition - so the next frame is not corrected with a value that
+        was tuned for a different picture.
+        """
+        self._gamma = 1.0
+
     def toggle(self) -> bool:
         self.enabled = not self.enabled
         return self.enabled
