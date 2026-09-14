@@ -101,7 +101,12 @@ class Alarm(context: Context) {
     fun toggle(): Boolean { enabled = !enabled; return enabled }
 
     fun release() {
-        tone?.release()
+        // Refuse new work first, then let the thread drain, then free the
+        // generator. Releasing the tone before quitting let a pattern that
+        // was still queued call startTone() on a dead generator; it only
+        // threw into the catch above, but the order was backwards.
+        enabled = false
         thread.quitSafely()
+        tone?.release()
     }
 }
