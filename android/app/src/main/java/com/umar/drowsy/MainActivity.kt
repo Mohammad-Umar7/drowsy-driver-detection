@@ -18,6 +18,7 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -238,9 +239,20 @@ class MainActivity : AppCompatActivity() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
             val provider = future.get()
-            val preview = Preview.Builder().build().also {
-                it.setSurfaceProvider(ui.preview.surfaceProvider)
-            }
+            // The preview and the analysis stream MUST share an aspect ratio.
+            // mapBox() puts the eye boxes on screen by assuming the analysed
+            // frame is letterboxed exactly like the preview. Left to choose
+            // for itself, Preview follows the display's ratio and can land on
+            // 4:3 while analysis is 16:9 - then every box sits a fixed
+            // distance off the eye it belongs to. Pin both to 16:9.
+            val ratio = AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+            val preview = Preview.Builder()
+                .setResolutionSelector(
+                    ResolutionSelector.Builder().setAspectRatioStrategy(ratio).build()
+                )
+                .build().also {
+                    it.setSurfaceProvider(ui.preview.surfaceProvider)
+                }
             val analysis = ImageAnalysis.Builder()
                 // Ask for 720p. Left to itself, ImageAnalysis delivers 640x480
                 // - CameraX's documented default - which is the exact mode the
@@ -252,6 +264,7 @@ class MainActivity : AppCompatActivity() {
                 // this sensor supports if 1280x720 is not offered.
                 .setResolutionSelector(
                     ResolutionSelector.Builder()
+                        .setAspectRatioStrategy(ratio)
                         .setResolutionStrategy(
                             ResolutionStrategy(
                                 Size(1280, 720),
