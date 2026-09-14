@@ -390,6 +390,7 @@ def main():
         print(f"[saved] {args.record}")
     cv2.destroyAllWindows()
     tracker.close()
+    alarm.close()
 
 
 if __name__ == "__main__":

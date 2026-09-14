@@ -42,10 +42,20 @@ sys.path.insert(0, str(ROOT))
 from src.config import DrowsyCfg          # noqa: E402
 from src import geometry as G             # noqa: E402
 from src import lighting as L             # noqa: E402
+from src import alarm as AL               # noqa: E402
 
 KT_DROWSY = ROOT / "android/app/src/main/java/com/umar/drowsy/Drowsiness.kt"
 KT_GEOM = ROOT / "android/app/src/main/java/com/umar/drowsy/Geometry.kt"
 KT_LIGHT = ROOT / "android/app/src/main/java/com/umar/drowsy/Lighting.kt"
+KT_ALARM = ROOT / "android/app/src/main/java/com/umar/drowsy/Alarm.kt"
+
+# The alarm's sound design: pitches, durations and the escalation rule.
+ALARM_CONSTS = [
+    "SAMPLE_RATE", "SIREN_LOW_HZ", "SIREN_HIGH_HZ", "SIREN_SWEEP_MS",
+    "DROWSY_HI_HZ", "DROWSY_LO_HZ", "DROWSY_NOTE_MS", "DISTRACT_LO_HZ",
+    "DISTRACT_HI_HZ", "DISTRACT_CHIRP_MS", "CRITICAL_REPEATS_MIN",
+    "CRITICAL_REPEATS_MAX", "ESCALATION_WINDOW_SEC",
+]
 
 # The lighting stage's decision constants. lighting.py defines each as a
 # module-level name; Lighting.kt keeps the same names in `object LightCfg`.
@@ -178,6 +188,24 @@ def main():
             print(f"  {name:26s} {py_val!s:>8}  ->  MISSING")
             continue
         kt_val = kt_light[name]
+        same = abs(float(py_val) - float(kt_val)) < 1e-9
+        print(f"  {name:26s} {py_val!s:>8}  ->  {kt_val!s:<8} "
+              f"{'ok' if same else 'MISMATCH'}")
+        if not same:
+            problems.append(f"{name}: python {py_val} != kotlin {kt_val}")
+
+    # ---- 5. the alarm's sound design ---------------------------------
+    print("\nalarm constants  (alarm.py  vs  Alarm.kt AlarmCfg)")
+    print("-" * 66)
+    kt_alarm = parse_kotlin_consts(KT_ALARM)
+    for name in ALARM_CONSTS:
+        py_val = getattr(AL, name)
+        checked += 1
+        if name not in kt_alarm:
+            problems.append(f"{name}: MISSING from Alarm.kt")
+            print(f"  {name:26s} {py_val!s:>8}  ->  MISSING")
+            continue
+        kt_val = kt_alarm[name]
         same = abs(float(py_val) - float(kt_val)) < 1e-9
         print(f"  {name:26s} {py_val!s:>8}  ->  {kt_val!s:<8} "
               f"{'ok' if same else 'MISMATCH'}")
