@@ -295,11 +295,12 @@ def main():
             f"         python -m src.infer --source http://<phone-ip>:8080/video")
     print(f"[ok] source: {cap.describe()}")
 
+    # The recorder is created LAZILY, once the real frame rate is known.
+    # It used to be opened up front at a hard-coded 20 fps, so a clip captured
+    # at 28 fps played back 40% too fast and one captured at 13 fps played in
+    # slow motion. The first ~30 frames (about a second) are not recorded;
+    # that is the price of a clip that plays at the right speed.
     writer = None
-    if args.record:
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        w, h = cap.size
-        writer = cv2.VideoWriter(args.record, fourcc, 20.0, (w, h))
 
     # FPS over a rolling window of 30 frames -- a single-frame estimate is far
     # too noisy to read on screen.
@@ -345,6 +346,9 @@ def main():
             if lost_since is None:
                 lost_since = time.time()
             gone = time.time() - lost_since
+            # Forget the loop timer: otherwise the first frame after recovery is
+            # timed against the entire outage and the FPS readout collapses.
+            t_prev = None
 
             # Keep the UI alive while reconnecting: show the last good frame
             # under a banner, and keep honouring keystrokes.
@@ -456,6 +460,12 @@ def main():
             cv2.putText(frame, msg, (14, 92), FONT, 0.75, (0, 255, 255), 2,
                         cv2.LINE_AA)
 
+        if args.record and writer is None and len(times) >= 30:
+            rec_fps = float(min(60.0, max(5.0, round(fps))))
+            h_, w_ = frame.shape[:2]
+            writer = cv2.VideoWriter(args.record, cv2.VideoWriter_fourcc(*"mp4v"),
+                                     rec_fps, (w_, h_))
+            print(f"[record] {args.record} at {rec_fps:.0f} fps (measured)")
         if writer is not None:
             writer.write(frame)
         cv2.imshow(WIN, frame)
