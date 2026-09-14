@@ -171,6 +171,10 @@ class Alarm(context: Context) {
     private var tts: TextToSpeech? = null
 
     @Volatile private var playing = false
+    @Volatile private var preempt = false          // cut the current pattern short
+    @Volatile private var current: AudioTrack? = null
+    @Volatile private var currentKind = ""
+    private var gen = 0                            // which post owns `playing`
     private var criticalLevel = 0
     private var lastCriticalT = Double.NaN
     private val cache = HashMap<String, ShortArray>()
@@ -208,66 +212,88 @@ class Alarm(context: Context) {
 
     /**
      * Start the pattern for `kind` ('distract' | 'drowsy' | 'critical').
-     * A pattern already playing is never interrupted and a fire() that lands
-     * meanwhile is dropped - the driver is already hearing it - but critical
-     * escalation is still counted, so the NEXT burst is the bigger one.
+     *
+     * A fire() that lands while a pattern is playing is dropped - the driver
+     * is already hearing it - with ONE exception: a CRITICAL siren cuts a
+     * lesser pattern short and starts at once. The drowsy nudge and the
+     * microsleep it warns about are often a second apart, and the siren
+     * must not queue behind two polite beeps. Critical escalation is counted
+     * either way, so the NEXT burst is the bigger one.
      */
     fun fire(kind: String, now: Double = System.nanoTime() / 1e9): Boolean {
         if (!enabled) return false
         val k = if (kind == "distract" || kind == "critical") kind else "drowsy"
         val level = if (k == "critical") escalate(now) else 0
-        if (playing) return false
-        playing = true
+        val myGen: Int
+        synchronized(this) {
+            if (playing) {
+                if (!(k == "critical" && currentKind != "critical")) return false
+                preempt = true
+                try { current?.stop() } catch (e: Exception) { }
+            }
+            gen += 1; myGen = gen
+            playing = true
+            currentKind = k
+        }
         last = k to level
-        val posted = handler.post {
+        return post(myGen) {
+            val restore = if (k == "critical") boostVolume() else null
             try {
-                val restore = if (k == "critical") boostVolume() else null
-                try {
-                    play(pcm(k, level))
-                } finally {
-                    restore?.let { restoreVolume(it) }
-                }
-                when (k) {
-                    "critical" -> {
-                        speak(if (level > 0) "Wake up! Pull over safely." else "Wake up!")
-                        // Road noise can bury a sound; a phone shaking in its
-                        // mount is still felt and seen.
-                        vibrate(longArrayOf(0, 500, 150, 500, 150, 700))
-                    }
-                    "drowsy" -> vibrate(longArrayOf(0, 250))
-                }
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-            } catch (e: Exception) {
-                // Audio must never take the detector down with it.
+                play(pcm(k, level))
             } finally {
-                playing = false
+                restore?.let { restoreVolume(it) }
+            }
+            if (preempt) return@post
+            when (k) {
+                "critical" -> {
+                    speak(if (level > 0) "Wake up! Pull over safely." else "Wake up!")
+                    // Road noise can bury a sound; a phone shaking in its
+                    // mount is still felt and seen.
+                    vibrate(longArrayOf(0, 500, 150, 500, 150, 700))
+                }
+                "drowsy" -> vibrate(longArrayOf(0, 250))
             }
         }
-        // post() returns false once the looper has quit (teardown). Without
-        // this the flag would stay set and the alarm would be dead for good.
-        if (!posted) playing = false
-        return posted
     }
 
     /**
      * Play the critical pattern once, without touching the escalation state,
      * so the driver can hear what it sounds like and check the volume before
-     * relying on it. Long-press Mute in the app.
+     * relying on it. Long-press Mute in the app; works while muted, too.
      */
     fun test(): Boolean {
-        if (playing) return false
-        playing = true
+        val myGen: Int
+        synchronized(this) {
+            if (playing) return false
+            gen += 1; myGen = gen
+            playing = true
+            currentKind = "critical"
+        }
+        return post(myGen) {
+            play(pcm("critical", 0))
+            speak("This is the alarm.")
+        }
+    }
+
+    /** Queue `body` on the alarm thread; the flag is released by whoever owns it. */
+    private fun post(myGen: Int, body: () -> Unit): Boolean {
         val posted = handler.post {
+            preempt = false
             try {
-                play(pcm("critical", 0))
-                speak("This is the alarm.")
+                body()
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
             } catch (e: Exception) {
+                // Audio must never take the detector down with it.
             } finally {
-                playing = false
+                // Only the newest post owns the flag: a pre-empted pattern
+                // finishing late must not clear it under the siren.
+                synchronized(this) { if (gen == myGen) playing = false }
             }
         }
-        if (!posted) playing = false
+        // post() returns false once the looper has quit (teardown). Without
+        // this the flag would stay set and the alarm would be dead for good.
+        if (!posted) synchronized(this) { if (gen == myGen) playing = false }
         return posted
     }
 
@@ -285,11 +311,19 @@ class Alarm(context: Context) {
             .setTransferMode(AudioTrack.MODE_STATIC)
             .build()
         try {
+            current = track
             track.write(pcm, 0, pcm.size)
             track.play()
-            Thread.sleep(pcm.size * 1000L / AlarmCfg.SAMPLE_RATE + 60)
-            track.stop()
+            // Sleep in slices so a pre-empting siren can cut this short.
+            val total = pcm.size * 1000L / AlarmCfg.SAMPLE_RATE + 60
+            var slept = 0L
+            while (slept < total && !preempt) {
+                Thread.sleep(50)
+                slept += 50
+            }
+            try { track.stop() } catch (e: IllegalStateException) { }
         } finally {
+            current = null
             track.release()
         }
     }
