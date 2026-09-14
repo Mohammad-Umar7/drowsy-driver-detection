@@ -281,6 +281,44 @@ class DrowsinessMonitorTest {
         assertTrue(st.reasons.any { it.contains("long blinks") })
     }
 
+    @Test fun escalationToCriticalNeverWaitsForTheCooldown() {
+        val m = DrowsinessMonitor()
+        var t = 1000.0
+        // Three long blinks -> DROWSY; the drowsy nudge fires on the third.
+        var lastDrowsyAlarm = Double.NaN
+        repeat(3) {
+            t = run(m, 5.2, t, ear = open).second
+            val n = (0.8 * fps).toInt()
+            for (i in 0 until n) {
+                val st = m.update(faceFound = true, ear = shut, now = t + i * dt)
+                if (st.shouldAlarm && st.alarmKind == "drowsy") lastDrowsyAlarm = t + i * dt
+            }
+            t += n * dt
+        }
+        val n0 = (0.5 * fps).toInt()
+        for (i in 0 until n0) {
+            val st = m.update(faceFound = true, ear = open, now = t + i * dt)
+            if (st.shouldAlarm && st.alarmKind == "drowsy") lastDrowsyAlarm = t + i * dt
+        }
+        t += n0 * dt
+        assertEquals(Level.DROWSY, m.state.level)
+        assertFalse("a drowsy nudge fired", lastDrowsyAlarm.isNaN())
+        assertTrue("and it was recent", t - lastDrowsyAlarm < 1.5)
+
+        // Eyes close for good, well inside the 4 s cooldown.
+        var firstCritical = Double.NaN
+        var sirenAt = Double.NaN
+        for (i in 0 until ((Cfg.MICROSLEEP_SEC + 1.0) * fps).toInt()) {
+            val st = m.update(faceFound = true, ear = shut, now = t + i * dt)
+            if (st.level == Level.CRITICAL && firstCritical.isNaN()) firstCritical = t + i * dt
+            if (st.shouldAlarm && st.alarmKind == "critical" && sirenAt.isNaN()) sirenAt = t + i * dt
+        }
+        assertFalse(firstCritical.isNaN())
+        assertTrue("siren on the very frame it went critical",
+            !sirenAt.isNaN() && abs(sirenAt - firstCritical) < 1e-9)
+        assertTrue("which is inside the cooldown", firstCritical - lastDrowsyAlarm < Cfg.ALARM_COOLDOWN_SEC)
+    }
+
     @Test fun faceLossHasAGracePeriod() {
         val m = DrowsinessMonitor()
         val (_, t) = run(m, 3.0, 1000.0, ear = open)

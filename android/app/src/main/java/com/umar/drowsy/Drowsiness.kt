@@ -116,6 +116,7 @@ class DrowsinessMonitor(
     private var lostSince: Double? = null
     private var levelAtLoss: Level = Level.AWAKE
     private var lastAlarmT = 0.0
+    private var lastAlarmKind = ""          // "drowsy" | "critical" on that channel
     private var lastDistractAlarmT = 0.0
 
     var blinks = 0; private set
@@ -128,7 +129,7 @@ class DrowsinessMonitor(
         lastT = null; closedSince = null; yawnSince = null
         nodSince = null; distractSince = null; lastFaceT = null
         lostSince = null; levelAtLoss = Level.AWAKE
-        lastAlarmT = 0.0; lastDistractAlarmT = 0.0
+        lastAlarmT = 0.0; lastAlarmKind = ""; lastDistractAlarmT = 0.0
         blinks = 0; longBlinks = 0; yawns = 0
         state = DrowsyState()
     }
@@ -153,6 +154,22 @@ class DrowsinessMonitor(
             else -> 0.5 + 0.5 * (closedProb - cnnThresh) / (1.0 - cnnThresh)
         }
         return cnnWeight * cnnScore + (1 - cnnWeight) * earScore
+    }
+
+    /**
+     * Cooldown for the drowsy/critical channel - with one exception.
+     * ESCALATION NEVER WAITS: if the last alarm was the DROWSY nudge and the
+     * driver has now gone CRITICAL, the siren goes immediately. Applying the
+     * cooldown blindly gave a microsleep that began a second after a nudge
+     * its WAKE UP three seconds late - the three seconds that matter most.
+     */
+    private fun alarmDue(kind: String, now: Double): Boolean {
+        val escalating = kind == "critical" && lastAlarmKind != "critical"
+        if (escalating || now - lastAlarmT >= Cfg.ALARM_COOLDOWN_SEC) {
+            lastAlarmT = now; lastAlarmKind = kind
+            return true
+        }
+        return false
     }
 
     private fun prune(now: Double) {
@@ -210,11 +227,8 @@ class DrowsinessMonitor(
                 // moment it mattered most. Hold the level and keep alarming.
                 level = levelAtLoss
                 reasons = listOf("FACE LOST while ${level.text} (%.0fs)".format(gone))
-                if (now - lastAlarmT >= Cfg.ALARM_COOLDOWN_SEC) {
-                    shouldAlarm = true
-                    alarmKind = if (level == Level.CRITICAL) "critical" else "drowsy"
-                    lastAlarmT = now
-                }
+                val kind = if (level == Level.CRITICAL) "critical" else "drowsy"
+                if (alarmDue(kind, now)) { shouldAlarm = true; alarmKind = kind }
             } else if (seenBefore && gone >= Cfg.FACE_LOST_NUDGE_SEC) {
                 // Not drowsy, but out of view for a while: a gentle nudge.
                 // Only once a driver has actually been seen - the app has
@@ -343,11 +357,8 @@ class DrowsinessMonitor(
         var shouldAlarm = false
         var alarmKind = ""
         if (level.rank >= Level.DROWSY.rank) {
-            if (now - lastAlarmT >= Cfg.ALARM_COOLDOWN_SEC) {
-                shouldAlarm = true
-                alarmKind = if (level == Level.CRITICAL) "critical" else "drowsy"
-                lastAlarmT = now
-            }
+            val kind = if (level == Level.CRITICAL) "critical" else "drowsy"
+            if (alarmDue(kind, now)) { shouldAlarm = true; alarmKind = kind }
         } else if (level == Level.DISTRACTED) {
             if (now - lastDistractAlarmT >= Cfg.DISTRACT_ALARM_COOLDOWN_SEC) {
                 shouldAlarm = true; alarmKind = "distract"; lastDistractAlarmT = now
