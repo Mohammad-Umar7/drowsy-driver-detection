@@ -26,8 +26,8 @@ import com.umar.drowsy.databinding.ActivityMainBinding
 import org.opencv.android.OpenCVLoader
 import org.opencv.android.Utils
 import org.opencv.core.Core
+import org.opencv.core.CvType
 import org.opencv.core.Mat
-import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -65,10 +65,8 @@ class MainActivity : AppCompatActivity() {
     // Allocated once and reused. Creating a Bitmap or Mat inside a 30 fps loop
     // churns megabytes per second and hands the garbage collector work inside
     // the frame budget, which is what makes camera apps stutter.
-    private val rawMat = Mat()
     private val uprightMat = Mat()
     private val grayMat = Mat()
-    private var rawBitmap: Bitmap? = null
     private var uprightBitmap: Bitmap? = null
 
     // MediaPipe's VIDEO mode requires STRICTLY increasing timestamps. Two
@@ -392,43 +390,40 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * RGBA frame -> upright Mat, reusing buffers.
+     * RGBA frame -> upright Mat, with exactly one copy.
      *
      * The sensor is mounted rotated relative to the screen, so frames arrive
      * rotated by rotationDegrees. MediaPipe needs an UPRIGHT face - a sideways
      * one is simply not detected - so this must happen before anything else.
      *
-     * Rotation is done with OpenCV on the Mat rather than with a Bitmap
-     * Matrix. Bitmap.createBitmap allocates a fresh bitmap every call, and at
-     * 30 fps on a 720p frame that is tens of megabytes a second of garbage.
-     * Core.rotate writes into a Mat we already own.
+     * The plane's ByteBuffer is WRAPPED as a Mat, not copied into one. OpenCV
+     * takes the row stride as the `step` argument, so a stride wider than the
+     * image - which is common - is handled by the Mat header itself instead
+     * of by us reshaping bytes. Core.rotate then makes the single copy that
+     * is genuinely needed, into a Mat we already own.
      *
-     * The row stride is handled explicitly: it is frequently WIDER than the
-     * image, and copying it as if it were not skews every row into a diagonal
-     * smear.
+     * The previous version went ByteBuffer -> Bitmap -> Mat -> crop -> rotate:
+     * two extra full-frame copies per frame, and a latent crash. Android does
+     * not guarantee that the LAST row of a plane carries its padding, so the
+     * buffer can be shorter than stride*height, and Bitmap.copyPixelsFromBuffer
+     * throws on exactly that. Every frame then failed inside the catch block
+     * and the app showed nothing, with only a logcat line to say why.
      */
     private fun ImageProxy.intoUprightMat(dst: Mat): Boolean {
         val plane = planes.firstOrNull() ?: return false
-        val padded = width +
-            (plane.rowStride - plane.pixelStride * width) / plane.pixelStride
-
-        var bmp = rawBitmap
-        if (bmp == null || bmp.width != padded || bmp.height != height) {
-            bmp = Bitmap.createBitmap(padded, height, Bitmap.Config.ARGB_8888)
-            rawBitmap = bmp
-        }
-        plane.buffer.rewind()
-        bmp.copyPixelsFromBuffer(plane.buffer)
-        Utils.bitmapToMat(bmp, rawMat)
-
-        val src = if (padded != width) Mat(rawMat, Rect(0, 0, width, height)) else rawMat
+        if (plane.pixelStride != 4) return false     // not the RGBA we asked for
+        val buf = plane.buffer
+        buf.rewind()
+        val src = Mat(height, width, CvType.CV_8UC4, buf, plane.rowStride.toLong())
         when (imageInfo.rotationDegrees) {
             90 -> Core.rotate(src, dst, Core.ROTATE_90_CLOCKWISE)
             180 -> Core.rotate(src, dst, Core.ROTATE_180)
             270 -> Core.rotate(src, dst, Core.ROTATE_90_COUNTERCLOCKWISE)
             else -> src.copyTo(dst)
         }
-        if (src !== rawMat) src.release()
+        // Drops the header only; the pixels belong to the ImageProxy, which
+        // onFrame closes once the frame is finished with.
+        src.release()
         return !dst.empty()
     }
 
@@ -449,7 +444,7 @@ class MainActivity : AppCompatActivity() {
         landmarker?.close(); landmarker = null
         classifier?.close(); classifier = null
         alarm?.release(); alarm = null
-        rawMat.release(); uprightMat.release(); grayMat.release()
+        uprightMat.release(); grayMat.release()
         lighting.release()
     }
 
