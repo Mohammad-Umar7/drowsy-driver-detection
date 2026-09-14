@@ -59,11 +59,40 @@ cd android
 | Button | Does |
 |---|---|
 | **Calibrate** | re-measure your open-eye EAR (do this if it misreads you) |
-| **Flip** | front ↔ rear camera |
-| **Mute** | silence the alarm |
+| **Flip** | front ↔ rear camera (stays put, and says so, if the device has no camera on the other side) |
+| **Mute** | silence the alarm — a `MUTED` chip appears in the top card while it is off |
+| **Reset** | clear the counters, PERCLOS window and the closure strip |
 
-The screen stays awake while the app is open (`keepScreenOn`), so it will not
-sleep mid-drive.
+The calibrated threshold is saved, so the next launch uses it instead of
+calibrating again.
+
+The screen stays awake while the app is open, so it will not sleep mid-drive.
+(`keepScreenOn` originally sat on the `<activity>` element in the manifest,
+where it is not a valid attribute and was silently ignored — the phone was free
+to lock in the middle of a drive. It belongs on a View, and now is.)
+
+### The display
+
+Top card: the state as a coloured pill that flashes on **WAKE UP!**, the reasons
+behind it, and chips for frame rate and lighting condition (amber when the
+light is genuinely difficult, so a bad reading can be blamed on the scene rather
+than the driver). Bottom card: PERCLOS and eye-closure bars with their
+threshold ticks, then the **closure strip** — the last 30 seconds of the fused
+closure score, red where the eyes were shut. A blink is a narrow spike, a
+microsleep is a wide red block, and the slide into fatigue is spikes getting
+wider and closer together. Below that, EAR against its threshold, MAR, head
+pose, which eyes are trusted and how wide they are in pixels, and the counters.
+
+Every size is in dp/sp. The first version used pixel literals tuned on one
+phone, so on a 720p screen the panels covered half the preview and on a 1440p
+one the text was unreadable.
+
+### Resolution
+
+Frames are analysed at **1280×720**. Left to its default, CameraX's
+`ImageAnalysis` delivers 640×480 — the mode the desktop version had to fight,
+where an eye at driving distance is ~23 px wide and a 2 px landmark error is a
+30 % error in EAR. Sensors without a 720p mode fall back to the closest one.
 
 ---
 
@@ -146,6 +175,9 @@ aliases. Training used `INTER_AREA`, so the phone does too.
 | | Desktop | Android |
 |---|---|---|
 | Lighting normalisation | yes (`lighting.py`) | yes (`Lighting.kt`) |
+| Head-pose seeding from the previous frame | yes | yes (`Geometry.kt`) |
+| Closure strip on the display | yes (`hud.py`) | yes (`OverlayView.kt`) |
+| Saved calibration | `calibration.json` | `SharedPreferences` |
 | Debug eye-crop view | `d` key | not present |
 | Screenshots / recording | `s` / `--record` | not present |
 | Session summary on exit | yes | not present |
@@ -158,7 +190,9 @@ implementation rather than a reimplementation. On desktop it takes night from
 `scripts/check_port_parity.py` compares the Kotlin constants and landmark
 indices against the Python mechanically, because two copies of the same logic
 drift silently. It has already caught two real cases: a dropped `contrast < 60`
-term in the lighting classifier, and a stale threshold default.
+term in the lighting classifier, and a stale threshold default. The lighting
+stage's own constants are now named on both sides (`LightCfg` in Kotlin) and
+checked too — 52 values in all.
 
 ---
 
@@ -173,6 +207,12 @@ ago is worse than useless.
 Frames arrive rotated, since the camera sensor is mounted at an angle to the
 screen. They are rotated upright before anything else touches them: MediaPipe
 does not detect a sideways face at all, so this cannot be deferred.
+
+The frame's buffer is wrapped as an OpenCV `Mat` directly, with the row stride
+passed as the Mat's step, so the rotation is the only copy made. The earlier
+path went buffer → Bitmap → Mat → crop → rotate, two extra full-frame copies,
+and could crash outright: Android does not guarantee the last row of a plane
+carries its padding, and `Bitmap.copyPixelsFromBuffer` throws on exactly that.
 
 ---
 
