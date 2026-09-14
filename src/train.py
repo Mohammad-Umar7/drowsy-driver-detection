@@ -270,6 +270,14 @@ def main():
               f"bal {va['bal_acc']*100:5.2f}% auc {va['auc']:.4f}  "
               f"lr {lr_now:.2e}  {dt:.1f}s{flag}")
 
+        # Write history after EVERY epoch, not only at the end. A crash, a
+        # Ctrl-C or a power cut in epoch 25 of 30 used to lose all 25 rows of
+        # the learning curve. The final write below overwrites this with
+        # complete=True and the test metrics.
+        Path(CFG.paths.reports, "history.json").write_text(json.dumps(
+            {"history": history, "best_epoch": best_epoch, "arch": args.arch,
+             "complete": False}, indent=2))
+
         if patience >= CFG.train.early_stop_patience:
             print(f"[early stop] no val improvement for {patience} epochs")
             break
