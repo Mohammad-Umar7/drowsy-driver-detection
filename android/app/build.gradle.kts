@@ -100,4 +100,9 @@ dependencies {
     // the phone removes that whole class of bug, instead of hand-rolling a
     // CLAHE in Kotlin and hoping it matches.
     implementation("org.opencv:opencv:4.12.0")
+
+    // Plain JVM tests for the temporal state machine. Drowsiness.kt has no
+    // Android dependency, so it runs on the desktop JVM in seconds:
+    //     ./gradlew testDebugUnitTest
+    testImplementation("junit:junit:4.13.2")
 }
