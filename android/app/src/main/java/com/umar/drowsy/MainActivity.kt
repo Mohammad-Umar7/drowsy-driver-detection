@@ -4,12 +4,16 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.RectF
+import android.hardware.camera2.CameraCharacteristics
 import android.os.Bundle
 import android.util.Log
 import android.util.Size
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -57,6 +61,12 @@ class MainActivity : AppCompatActivity() {
 
     private var lensFacing = CameraSelector.LENS_FACING_FRONT
     private var earThresh = Cfg.EAR_THRESH
+
+    // Focal length of the current lens as a fraction of the frame's long
+    // side, from the real camera characteristics. 0 when unknown, in which
+    // case head pose falls back to the desktop's "long side" approximation.
+    // Written on the main thread when a camera binds, read per frame.
+    @Volatile private var focalRatio = 0.0
 
     // Rolling FPS. A single-frame estimate is far too noisy to read.
     private val frameTimes = ArrayDeque<Double>()
@@ -277,12 +287,40 @@ class MainActivity : AppCompatActivity() {
 
             try {
                 provider.unbindAll()
-                provider.bindToLifecycle(this, selector, preview, analysis)
+                val camera = provider.bindToLifecycle(this, selector, preview, analysis)
+                readLensIntrinsics(camera.cameraInfo)
             } catch (e: Exception) {
                 Log.e(TAG, "bind failed", e)
                 Toast.makeText(this, R.string.camera_failed, Toast.LENGTH_LONG).show()
             }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    /**
+     * Focal length in pixels from the lens itself, not from a guess.
+     *
+     * Head pose needs the camera's focal length in pixels. The desktop has
+     * no way to know it and assumes the frame's long side, which is right
+     * to within about 25% for a typical webcam. The phone CAN know it:
+     * Camera2 reports the lens focal length in millimetres and the sensor's
+     * physical size, and the frame's long side spans the sensor's long side,
+     * so   focal_px = focal_mm / sensor_long_mm * frame_long_px.
+     * A phone front camera is wide (about 3 mm on a 4.5 mm sensor), so the
+     * guess was off by a third: every angle it reported was too large.
+     */
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    private fun readLensIntrinsics(info: CameraInfo) {
+        focalRatio = try {
+            val c2 = Camera2CameraInfo.from(info)
+            val fMm = c2.getCameraCharacteristic(
+                CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull() ?: 0f
+            val sensor = c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+            val longMm = if (sensor != null) max(sensor.width, sensor.height) else 0f
+            if (fMm > 0f && longMm > 0f) fMm.toDouble() / longMm else 0.0
+        } catch (e: Exception) {
+            0.0
+        }
+        Log.i(TAG, "lens focal = %.3f x frame long side".format(focalRatio))
     }
 
     private fun onFrame(proxy: ImageProxy) {
@@ -333,7 +371,9 @@ class MainActivity : AppCompatActivity() {
                 val earL = Geometry.eyeAspectRatio(pts, Geometry.LEFT_EYE_EAR)
                 val earR = Geometry.eyeAspectRatio(pts, Geometry.RIGHT_EYE_EAR)
                 mar = Geometry.mouthAspectRatio(pts)
-                val pose = Geometry.headPose(pts, w, h)
+                val ratio = focalRatio
+                val focalPx = if (ratio > 0.0) ratio * max(w, h) else max(w, h).toDouble()
+                val pose = Geometry.headPose(pts, w, h, focalPx)
                 pitch = pose[0]; yaw = pose[1]
 
                 // Which eye can we actually see? On a head turn the far eye is

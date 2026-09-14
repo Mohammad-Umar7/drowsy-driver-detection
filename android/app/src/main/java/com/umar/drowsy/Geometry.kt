@@ -127,19 +127,28 @@ object Geometry {
      * pitch and yaw occasionally jumped by tens of degrees for a single frame
      * - enough to fake the start of a head nod.
      *
+     * @param focalPx the lens focal length in pixels. MainActivity derives it
+     *   from the real lens (focal length in mm over sensor width in mm, times
+     *   the frame's long side). The default is the desktop's approximation:
+     *   the LONGER side of the frame. The longer side, because phone frames
+     *   are portrait here - with the width, the estimate was 720 instead of
+     *   1280, a focal length 44% too small, and every head angle came out
+     *   inflated: a glance at a mirror read as looking away.
+     *
      * Returns (pitch, yaw, roll) in degrees.
      *   pitch < 0 -> tipping down (nodding off)
      *   yaw   != 0 -> looking left/right
      */
-    fun headPose(pts: Array<FloatArray>, w: Int, h: Int): DoubleArray {
+    fun headPose(
+        pts: Array<FloatArray>, w: Int, h: Int,
+        focalPx: Double = max(w, h).toDouble()
+    ): DoubleArray {
         imagePts.fromArray(*Array(POSE_LANDMARKS.size) {
             val p = pts[POSE_LANDMARKS[it]]
             Point(p[0].toDouble(), p[1].toDouble())
         })
 
-        // Approximate intrinsics: a camera's focal length in pixels is roughly
-        // the image width. Good enough because only angles are wanted.
-        val focal = w.toDouble()
+        val focal = if (focalPx > 0.0) focalPx else max(w, h).toDouble()
         camMat.put(0, 0, focal, 0.0, w / 2.0, 0.0, focal, h / 2.0, 0.0, 0.0, 1.0)
 
         if (haveSeed) { prevRvec.copyTo(rvec); prevTvec.copyTo(tvec) }

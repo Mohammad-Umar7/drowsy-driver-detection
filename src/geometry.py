@@ -110,9 +110,17 @@ def head_pose(landmarks_px: np.ndarray, frame_shape) -> tuple:
     h, w = frame_shape[:2]
     image_points = np.asarray(landmarks_px, dtype=np.float64)[POSE_LANDMARKS]
 
-    # Approximate camera intrinsics. A webcam focal length in pixels is roughly
-    # the image width -- good enough here because only angles are needed.
-    focal = float(w)
+    # Approximate camera intrinsics. A camera's focal length in pixels is
+    # roughly the LONGER side of the image -- good enough here because only
+    # angles are needed.
+    #
+    # The longer side, not the width. A phone stream arrives portrait after
+    # --rotate 90/270, and with focal = w the estimate was the SHORT side:
+    # 720 instead of 1280, a focal length 44% too small, and every head
+    # angle inflated accordingly - a driver glancing at a mirror read as
+    # looking away. The Kotlin port makes the same choice, so a given head
+    # pose produces the same angle on both platforms.
+    focal = float(max(w, h))
     cam_matrix = np.array([[focal, 0, w / 2.0],
                            [0, focal, h / 2.0],
                            [0, 0, 1.0]], dtype=np.float64)
