@@ -39,6 +39,7 @@ data class HudFrame(
     val boxes: List<RectF> = emptyList(),
     val calibrating: Boolean = false,
     val calibRemaining: Double = 0.0,
+    val calibTotal: Double = 3.0,
     val light: LightStats = LightStats(),
     val lightingOn: Boolean = true,
     val alarmOn: Boolean = true,
@@ -231,7 +232,14 @@ class OverlayView @JvmOverloads constructor(
         val h = height.toFloat()
         val m = dp(12f)
         val radius = dp(16f)
-        val col = levelColor(st.level)
+        // Before the first frame there is no verdict to show. The default
+        // state would read "AWAKE / normal", which is a claim about a driver
+        // nobody has looked at yet; say what is actually happening instead.
+        val started = fr.now > 0.0
+        val col = if (started) levelColor(st.level) else levelColor(Level.NO_FACE)
+        val levelText = if (started) st.level.text else "STARTING"
+        val reason = if (started) st.reasons.take(2).joinToString("  |  ")
+                     else "opening the camera..."
 
         // Eye boxes, coloured by state, so it is obvious what is being watched.
         stroke.strokeWidth = dp(2f)
@@ -253,7 +261,7 @@ class OverlayView @JvmOverloads constructor(
         var x = m + dp(12f)
         val pillH = dp(36f)
         val pillY = topY + dp(12f)
-        chip(canvas, st.level.text, x, pillY, pillH,
+        chip(canvas, levelText, x, pillY, pillH,
              if (flash) bad else Color.rgb(14, 16, 22), if (flash) ink else col,
              textPill, dp(14f))
 
@@ -277,14 +285,13 @@ class OverlayView @JvmOverloads constructor(
 
         // Reasons, ellipsized to the space that is actually left.
         textSmall.color = muted
-        val reason = st.reasons.take(2).joinToString("  |  ")
         val avail = (w - m - dp(12f)) - x
         canvas.drawText(
             TextUtils.ellipsize(reason, textSmall, avail, TextUtils.TruncateAt.END).toString(),
             x, topY + topH - dp(14f), textSmall)
 
         // ---- calibration banner ----
-        if (fr.calibrating) {
+        if (fr.calibrating && started) {
             val bh = dp(56f)
             val bt = topY + topH + dp(10f)
             panel(canvas, m, bt, w - m, bt + bh, dp(12f), Color.argb(215, 14, 16, 22))
@@ -292,7 +299,7 @@ class OverlayView @JvmOverloads constructor(
             val msg = if (fr.faceFound) "CALIBRATING  -  keep your eyes OPEN"
                       else "CALIBRATING  -  waiting for a face..."
             canvas.drawText(msg, m + dp(14f), bt + dp(24f), textBody)
-            val frac = if (fr.faceFound) 1.0 - fr.calibRemaining / 3.0 else 0.0
+            val frac = if (fr.faceFound) 1.0 - fr.calibRemaining / max(1e-6, fr.calibTotal) else 0.0
             bar(canvas, m + dp(14f), bt + dp(36f), w - 2 * m - dp(28f), dp(8f), frac, warn, null)
         }
 

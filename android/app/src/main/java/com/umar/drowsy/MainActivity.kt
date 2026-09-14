@@ -414,6 +414,7 @@ class MainActivity : AppCompatActivity() {
                 fps = fps, boxes = boxes.toList(),
                 calibrating = calibrator.armed,
                 calibRemaining = calibrator.remaining(now),
+                calibTotal = calibrator.seconds,
                 light = lighting.stats, lightingOn = lighting.enabled,
                 alarmOn = alarm?.enabled ?: false, modelOn = classifier != null,
                 now = now

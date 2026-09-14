@@ -381,7 +381,7 @@ class DrowsinessMonitor(
  * both a minimum duration and a minimum count, so stray frames cannot end it.
  */
 class EarCalibrator(
-    private val seconds: Double = 3.0,
+    val seconds: Double = 3.0,
     private val minSamples: Int = 30,
     private val ratio: Double = Cfg.EAR_CALIB_RATIO
 ) {
