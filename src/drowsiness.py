@@ -38,6 +38,7 @@ thresholds silently change meaning when the frame rate changes -- a laptop on
 battery drops to 15 FPS and suddenly "20 frames closed" means 1.3 s instead of
 0.66 s. Timestamps make the system frame-rate independent.
 """
+import dataclasses
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -130,6 +131,8 @@ class DrowsinessMonitor:
         self._nod_since = None
         self._distract_since = None
         self._last_face_t = None
+        self._lost_since = None
+        self._level_at_loss = Level.AWAKE
         self._last_alarm_t = 0.0
         self._last_distract_alarm_t = 0.0
 
@@ -197,24 +200,65 @@ class DrowsinessMonitor:
             # reset everything, so we allow a grace period before giving up.
             if self._last_face_t is not None and \
                     now - self._last_face_t < self.cfg.face_lost_grace_sec:
-                s = self.state
-                s.reasons = ["face lost (grace period)"]
-                # Clear the alarm edge. Without this, a state captured with
-                # should_alarm=True would re-fire on every grace-period frame,
-                # because nothing recomputes it while the face is missing.
-                s.should_alarm = False
+                # A COPY, not the stored object: mutating self.state in place
+                # would silently rewrite history that the caller may still
+                # hold a reference to.
+                s = dataclasses.replace(
+                    self.state, reasons=["face lost (grace period)"],
+                    should_alarm=False, alarm_kind="")
                 return s
-            # Genuinely gone: stop accumulating, but keep counters so the
-            # driver cannot clear a bad PERCLOS by ducking out of frame.
+
+            # Genuinely gone. Freeze the closure timer and the mouth/head
+            # timers: a yawn or nod that began before the dropout must not be
+            # "completed" the instant the face returns.
+            if self._lost_since is None:
+                self._lost_since = (self._last_face_t
+                                    if self._last_face_t is not None else now)
+                self._level_at_loss = self.state.level
+            gone = now - self._lost_since
             self._closed_since = None
-            self._microsleep_fired = False
-            s.level = Level.NO_FACE
-            s.reasons = ["no face detected"]
-            s.blinks, s.yawns = self.blinks, self.yawns
+            self._yawn_since = None
+            self._nod_since = None
+            self._distract_since = None
+
+            level, reasons = Level.NO_FACE, ["no face detected"]
+            should_alarm, alarm_kind = False, ""
+
+            if (self._level_at_loss >= Level.DROWSY and
+                    gone <= self.cfg.face_lost_hold_sec):
+                # THE SAFETY CASE. The most dangerous way to lose a face is a
+                # drowsy driver slumping out of frame. NO_FACE ranks below
+                # AWAKE and never alarms, so the old code went SILENT at
+                # exactly the moment it mattered most. Hold the last level and
+                # keep alarming until the driver is seen again.
+                level = self._level_at_loss
+                reasons = [f"FACE LOST while {LEVEL_TEXT[level]} ({gone:.0f}s)"]
+                if now - self._last_alarm_t >= self.cfg.alarm_cooldown_sec:
+                    should_alarm = True
+                    alarm_kind = ("critical" if level == Level.CRITICAL
+                                  else "drowsy")
+                    self._last_alarm_t = now
+            elif gone >= self.cfg.face_lost_nudge_sec:
+                # Not drowsy, but the driver has been out of view for a while.
+                # A gentle nudge on the distraction channel, not a siren.
+                level = Level.DISTRACTED
+                reasons = [f"driver not visible ({gone:.0f}s)"]
+                if now - self._last_distract_alarm_t >= \
+                        self.cfg.distract_alarm_cooldown_sec:
+                    should_alarm = True
+                    alarm_kind = "distract"
+                    self._last_distract_alarm_t = now
+
+            # Counters are kept so the driver cannot clear a bad PERCLOS by
+            # ducking out of frame.
+            s = DrowsyState(level=level, blinks=self.blinks, yawns=self.yawns,
+                            reasons=reasons, should_alarm=should_alarm,
+                            alarm_kind=alarm_kind, eyes_reliable=False)
             self.state = s
             return s
 
         self._last_face_t = now
+        self._lost_since = None
         self._prune(now)
 
         # ---- 1. is the eye closed right now? -------------------------

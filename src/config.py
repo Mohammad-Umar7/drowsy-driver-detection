@@ -120,6 +120,14 @@ class DrowsyCfg:
     # a mirror is how the whole system ends up switched off.
     distract_alarm_cooldown_sec: float = 9.0
     face_lost_grace_sec: float = 2.0    # ignore brief tracking dropouts
+    # If the face vanishes while the driver was DROWSY or CRITICAL, keep that
+    # level and keep alarming for this long. A drowsy driver slumping out of
+    # frame is the most dangerous way to lose a face, and it must not be the
+    # thing that silences the alarm.
+    face_lost_hold_sec: float = 15.0
+    # In any other state, a driver out of view for this long gets a gentle
+    # nudge on the distraction channel.
+    face_lost_nudge_sec: float = 8.0
 
 
 @dataclass

@@ -351,6 +351,67 @@ def test_calibration_refuses_closed_eyes():
     print(f"        -> {c.failed_reason}")
 
 
+def test_drowsy_driver_slumping_out_of_frame_keeps_alarming():
+    print("\n[19] a DROWSY driver who vanishes from view must NOT silence the alarm")
+    m = DrowsinessMonitor()
+    _, t = run(m, 5.0, 1000.0, ear=EAR_OPEN)
+    st, t = run(m, D.microsleep_sec + 0.5, t, ear=EAR_SHUT)
+    check("driver is CRITICAL", st.level == Level.CRITICAL, f"got {st.level.name}")
+
+    # Now the face is gone - the driver has slumped out of the camera's view.
+    # Old behaviour: NO_FACE, which ranks below AWAKE and never alarms.
+    fired = 0
+    st = None
+    for i in range(int(10.0 * FPS)):
+        st = m.update(face_found=False, now=t + i * DT)
+        if st.should_alarm:
+            fired += 1
+    check("level is HELD at CRITICAL, not dropped to NO_FACE",
+          st.level == Level.CRITICAL, f"got {st.level.name}")
+    check("alarm keeps firing while the face is missing", fired >= 2,
+          f"fired {fired} times in 10 s")
+    check("reason says why", any("FACE LOST" in r for r in st.reasons),
+          f"got {st.reasons}")
+    print(f"        -> {st.reasons[0]}, alarm fired {fired}x in 10 s")
+
+    # After the hold period it must eventually release.
+    for i in range(int(10.0 * FPS), int((D.face_lost_hold_sec + 4.0) * FPS)):
+        st = m.update(face_found=False, now=t + i * DT)
+    check("releases after the hold period", st.level != Level.CRITICAL,
+          f"got {st.level.name}")
+
+
+def test_awake_driver_out_of_view_gets_a_nudge_not_a_siren():
+    print("\n[20] an AWAKE driver out of view for a while gets a gentle nudge")
+    m = DrowsinessMonitor()
+    _, t = run(m, 5.0, 1000.0, ear=EAR_OPEN)
+    kinds = set()
+    st = None
+    for i in range(int((D.face_lost_nudge_sec + 3.0) * FPS)):
+        st = m.update(face_found=False, now=t + i * DT)
+        if st.should_alarm:
+            kinds.add(st.alarm_kind)
+    check("level is DISTRACTED", st.level == Level.DISTRACTED,
+          f"got {st.level.name}")
+    check("only the gentle sound was used", kinds == {"distract"},
+          f"got {kinds}")
+
+
+def test_yawn_timer_does_not_survive_face_loss():
+    print("\n[21] a yawn that started before a dropout is not completed on return")
+    m = DrowsinessMonitor()
+    _, t = run(m, 3.0, 1000.0, ear=EAR_OPEN)
+    # Mouth opens, then the face is lost for longer than the grace period.
+    _, t = run(m, 0.3, t, ear=EAR_OPEN, mar=0.75)
+    for i in range(int((D.face_lost_grace_sec + 1.0) * FPS)):
+        m.update(face_found=False, now=t + i * DT)
+    t += D.face_lost_grace_sec + 1.0
+    # Face returns with the mouth CLOSED. Old code: yawn_since was still set
+    # from before the dropout, so this frame "completed" a 3 s yawn.
+    st, _ = run(m, 0.5, t, ear=EAR_OPEN, mar=0.10)
+    check("no yawn was counted", st.yawns == 0, f"got {st.yawns}")
+
+
 def test_face_lost():
     print("\n[11] face disappears -> NO_FACE after the grace period")
     m = DrowsinessMonitor()
@@ -377,6 +438,9 @@ if __name__ == "__main__":
                test_calibration_waits_for_a_face,
                test_calibration_needs_enough_samples,
                test_calibration_refuses_closed_eyes,
+               test_drowsy_driver_slumping_out_of_frame_keeps_alarming,
+               test_awake_driver_out_of_view_gets_a_nudge_not_a_siren,
+               test_yawn_timer_does_not_survive_face_loss,
                test_face_lost):
         fn()
     print("\n" + "=" * 60)
