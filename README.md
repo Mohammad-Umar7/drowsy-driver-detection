@@ -92,6 +92,27 @@ getting wider and closer together, so "why did it just alarm?" is answerable at
 a glance. (These frames are rendered without a camera to check the layout, so
 the face is a placeholder.)
 
+### The alarm
+
+A beep does not wake a sleeping driver. Three things do, and the alarm does
+all three (`src/alarm.py`, `Alarm.kt`):
+
+- **A siren, not a tone.** A pitch sweeping 700 → 1500 Hz and back, with
+  harmonics so it is harsh rather than pure. Hearing habituates to a steady
+  note within seconds; it cannot habituate to one that keeps changing.
+- **Escalation.** Every consecutive **WAKE UP!** inside 12 seconds is longer
+  than the last: two sweeps, then three, then four.
+- **A voice.** After the siren it *says* "Wake up!", and once it has escalated,
+  "Wake up! Pull over safely." Speech tells a half-awake person what to do.
+
+Distraction stays a soft two-note chirp on purpose: it is a reminder, and an
+aggressive tone for a mirror check trains the driver to ignore every alert.
+The sounds are synthesised in numpy, so there are no audio files and nothing
+to install; speech uses what the OS already has (Windows SAPI, macOS `say`,
+`espeak` on Linux). On the phone the siren plays on the *alarm* stream, which
+silent mode cannot mute, the volume is raised for the burst, and the phone
+vibrates; long-press **Mute** to hear it before you need it.
+
 ### Run it off your phone in a car
 
 Your phone beats a laptop webcam: better low-light sensor, and it mounts where

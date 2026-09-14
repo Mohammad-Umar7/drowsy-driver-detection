@@ -60,7 +60,7 @@ cd android
 |---|---|
 | **Calibrate** | re-measure your open-eye EAR (do this if it misreads you) |
 | **Flip** | front ↔ rear camera (stays put, and says so, if the device has no camera on the other side) |
-| **Mute** | silence the alarm — a `MUTED` chip appears in the top card while it is off |
+| **Mute** | silence the alarm — a `MUTED` chip appears in the top card while it is off. **Long-press** to hear the WAKE UP alarm once and check the volume |
 | **Reset** | clear the counters, PERCLOS window and the closure strip |
 
 The calibrated threshold is saved, so the next launch uses it instead of
@@ -234,5 +234,6 @@ carries its padding, and `Bitmap.copyPixelsFromBuffer` throws on exactly that.
 | Black screen | permission denied | Settings → Apps → Drowsy Driver → Permissions → Camera |
 | No face detected | too dark, or too far | Move closer. Night correction is active, but software cannot recover a signal the sensor never captured |
 | Says drowsy while awake | calibration missed | Tap **Calibrate**, eyes open, hold 3 s |
-| Alarm inaudible | media volume | It plays on the **alarm** stream — raise alarm volume, not media |
+| Alarm inaudible | media volume | It plays on the **alarm** stream — raise alarm volume, not media. A WAKE UP burst also raises it to at least 80 % by itself and restores it afterwards |
+| Siren but no voice | no text-to-speech engine | The siren never depends on it. Install Google Text-to-Speech, or any TTS engine, and the words come back |
 | Low FPS / phone hot | thermal throttling | Expected. Every threshold is in seconds, not frames, so the verdict does not change — only smoothness does |
