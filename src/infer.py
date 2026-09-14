@@ -395,7 +395,11 @@ def main():
                                           (obs.use_left, obs.use_right)) if use]
             closed_prob = max(usable) if usable else None
 
-        if obs is not None and calib.active:
+        # Only feed the calibrator when the eyes are actually readable. With
+        # the head turned, obs.ear is the "nothing trustworthy" fallback, and a
+        # value like the 1.05 measured from a 4 px eye would poison the median
+        # and set a threshold no real eye could ever fall below.
+        if obs is not None and obs.eyes_reliable and calib.active:
             new_thr = calib.feed(obs.ear)
             if new_thr is not None:
                 ear_thr = new_thr
