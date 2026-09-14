@@ -104,6 +104,9 @@ all three (`src/alarm.py`, `Alarm.kt`):
   than the last: two sweeps, then three, then four.
 - **A voice.** After the siren it *says* "Wake up!", and once it has escalated,
   "Wake up! Pull over safely." Speech tells a half-awake person what to do.
+- **No waiting.** The DROWSY nudge and the microsleep it warns about are often
+  a second apart. Going CRITICAL bypasses the alarm cooldown, and the siren cuts
+  a nudge that is still playing short rather than queueing behind it.
 
 Distraction stays a soft two-note chirp on purpose: it is a reminder, and an
 aggressive tone for a mirror check trains the driver to ignore every alert.
