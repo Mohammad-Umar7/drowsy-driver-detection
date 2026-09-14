@@ -143,7 +143,10 @@ class OverlayView @JvmOverloads constructor(
             if (state.eyesReliable) "" else "  UNRELIABLE"), 24f, y, text)
         text.color = Color.rgb(225, 232, 238)
         y += 38f
-        canvas.drawText("blinks ${state.blinks}   yawns ${state.yawns}", 24f, y, text)
+        // Long blinks get their own count: they are the early-warning signal,
+        // and a driver watching this number climb learns something useful.
+        canvas.drawText("blinks ${state.blinks}   long ${state.longBlinks}   " +
+                        "yawns ${state.yawns}", 24f, y, text)
     }
 
     private fun drawBar(
