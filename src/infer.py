@@ -215,8 +215,14 @@ def load_model(device):
     if cp.exists():
         import json
         thr = json.loads(cp.read_text()).get("cnn_closed_thresh", thr)
-    print(f"[ok] model loaded (epoch {ck['epoch']}, "
-          f"val balanced acc {ck['val_bal_acc']*100:.2f}%)  threshold={thr:.3f}")
+    # Metadata is optional: a checkpoint written by anything other than
+    # src.train (a bare state_dict wrapped by hand, an older run) has none,
+    # and a missing label must not stop a perfectly good model from loading.
+    epoch = ck.get("epoch", "?")
+    acc = ck.get("val_bal_acc")
+    acc_txt = f"{acc*100:.2f}%" if isinstance(acc, (int, float)) else "n/a"
+    print(f"[ok] model loaded (epoch {epoch}, val balanced acc {acc_txt})  "
+          f"threshold={thr:.3f}")
     return model, thr
 
 
