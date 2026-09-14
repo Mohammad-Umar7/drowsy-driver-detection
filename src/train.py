@@ -294,10 +294,14 @@ def main():
     print(f"TEST (unseen subjects): acc {te['acc']*100:.2f}%  "
           f"balanced {te['bal_acc']*100:.2f}%  auc {te['auc']:.4f}")
 
+    # complete=True here, explicitly. The per-epoch writes above say
+    # complete=False; the final write used to omit the key altogether, so a
+    # reader could not tell a finished run from one that died after the
+    # last epoch and never reached the test set.
     Path(CFG.paths.reports, "history.json").write_text(json.dumps(
         {"history": history, "best_epoch": best_epoch,
          "test": {k: v for k, v in te.items() if k not in ("probs", "targets")},
-         "arch": args.arch, "minutes": total / 60}, indent=2))
+         "arch": args.arch, "minutes": total / 60, "complete": True}, indent=2))
     print(f"[saved] {CFG.paths.best_model}")
     print(f"[saved] {Path(CFG.paths.reports,'history.json')}")
     print("next:  python -m src.evaluate")
