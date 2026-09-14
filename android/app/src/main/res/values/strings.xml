@@ -10,4 +10,5 @@
     <string name="btn_reset">Reset</string>
     <string name="toast_reset">Counters reset</string>
     <string name="toast_calibrating">Keep your eyes OPEN for 3 seconds</string>
+    <string name="toast_alarm_test">Alarm test. This is what WAKE UP sounds like.</string>
 </resources>

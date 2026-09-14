@@ -176,6 +176,15 @@ class MainActivity : AppCompatActivity() {
             val on = alarm?.toggle() ?: false
             ui.btnAlarm.setText(if (on) R.string.btn_mute else R.string.btn_unmute)
         }
+        // Long-press: hear the critical alarm once. A driver should know
+        // what it sounds like, and whether the volume is right, BEFORE the
+        // first time it matters.
+        ui.btnAlarm.setOnLongClickListener {
+            if (alarm?.test() == true) {
+                Toast.makeText(this, R.string.toast_alarm_test, Toast.LENGTH_SHORT).show()
+            }
+            true
+        }
 
         // Reuse a saved calibration if one exists; otherwise measure this
         // driver straight away rather than relying on them remembering to
