@@ -81,6 +81,17 @@ EAR threshold to *your* face and materially improves accuracy.
 | `l` | toggle night/sun enhancement, to see what it's doing |
 | `s` | screenshot to `reports/` |
 
+![the display in four states](reports/hud_preview.png)
+
+The display is drawn with plain OpenCV, which has no UI toolkit: a translucent
+panel is a blended copy of the pixels under it, and a rounded corner is a
+circle (`src/hud.py`). The strip in the metrics card is the last 30 seconds of
+the fused eye-closure score, red where the eyes were shut. A blink is a narrow
+spike, a microsleep is a wide red block, and the slide into fatigue is spikes
+getting wider and closer together, so "why did it just alarm?" is answerable at
+a glance. (These frames are rendered without a camera to check the layout, so
+the face is a placeholder.)
+
 ### Run it off your phone in a car
 
 Your phone beats a laptop webcam: better low-light sensor, and it mounts where
@@ -316,6 +327,7 @@ src/
   evaluate.py      confusion matrix, ROC, PR, threshold selection, subgroups
   drowsiness.py    PERCLOS / microsleep / yawn / nod state machine
   alarm.py         non-blocking audible alarm
+  hud.py           the on-screen display: cards, bars, the closure sparkline
   infer.py         live webcam application
 scripts/
   prepare_data.py  unzip, preprocess, subject-wise split
