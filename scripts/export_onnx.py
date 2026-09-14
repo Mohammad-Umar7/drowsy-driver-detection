@@ -124,6 +124,7 @@ def main():
     X = np.load(xp)
     y = np.load(Path(CFG.paths.processed) / "test_y.npy")
 
+    thr = CFG.drowsy.cnn_closed_thresh
     batch = 512
     max_diff = 0.0
     agree = total = 0
@@ -138,8 +139,11 @@ def main():
         p_onnx = sess.run(["prob"], {"eye": t_in.numpy()})[0]
 
         max_diff = max(max_diff, float(np.abs(p_torch - p_onnx).max()))
-        a = (p_torch[:, 1] >= 0.5).astype(int)
-        b = (p_onnx[:, 1] >= 0.5).astype(int)
+        # Agreement is judged at the SHIPPED threshold, because that is the
+        # decision the phone actually makes. Checking at 0.5 would pass an
+        # export that flips answers in the 0.34-0.5 band we run in.
+        a = (p_torch[:, 1] >= thr).astype(int)
+        b = (p_onnx[:, 1] >= thr).astype(int)
         agree += int((a == b).sum())
         total += len(a)
         torch_pred.append(p_torch[:, 1])
@@ -147,7 +151,6 @@ def main():
 
     tp = np.concatenate(torch_pred)
     op = np.concatenate(onnx_pred)
-    thr = CFG.drowsy.cnn_closed_thresh
     acc_t = float(((tp >= thr).astype(int) == y).mean())
     acc_o = float(((op >= thr).astype(int) == y).mean())
 
