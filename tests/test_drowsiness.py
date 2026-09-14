@@ -445,6 +445,38 @@ def test_no_nudge_before_anyone_has_been_seen():
           f"fired {fired}, level {st.level.name}")
 
 
+def test_escalation_to_critical_never_waits_for_the_cooldown():
+    print("\n[24] a microsleep right after a drowsy nudge gets its siren NOW")
+    m = DrowsinessMonitor()
+    t = 1000.0
+    # Three long blinks -> DROWSY, and the drowsy nudge fires on the third.
+    for _ in range(3):
+        _, t = run(m, 5.2, t, ear=EAR_OPEN)
+        _, t = run(m, 0.8, t, ear=EAR_SHUT)
+    st, t = run(m, 0.5, t, ear=EAR_OPEN)
+    check("driver is DROWSY", st.level == Level.DROWSY, f"got {st.level.name}")
+    check("the drowsy nudge has just fired",
+          m._last_alarm_kind == "drowsy" and t - m._last_alarm_t < 1.5,
+          f"{m._last_alarm_kind} {t - m._last_alarm_t:.1f}s ago")
+
+    # Eyes close for good, well inside the 4 s cooldown.
+    first_critical_t = None
+    fired_at = None
+    for i in range(int((D.microsleep_sec + 1.0) * FPS)):
+        st = m.update(face_found=True, ear=EAR_SHUT, now=t + i * DT)
+        if st.level == Level.CRITICAL and first_critical_t is None:
+            first_critical_t = t + i * DT
+        if st.should_alarm and st.alarm_kind == "critical" and fired_at is None:
+            fired_at = t + i * DT
+    check("went CRITICAL", first_critical_t is not None)
+    check("the siren fired on the very frame it went CRITICAL",
+          fired_at is not None and abs(fired_at - first_critical_t) < 1e-6,
+          f"critical at {first_critical_t}, siren at {fired_at}")
+    check("which is inside the cooldown, not after it",
+          fired_at is not None and fired_at - m._last_alarm_t < 1e-6
+          and first_critical_t - t < D.alarm_cooldown_sec)
+
+
 def test_face_lost():
     print("\n[11] face disappears -> NO_FACE after the grace period")
     m = DrowsinessMonitor()
@@ -476,6 +508,7 @@ if __name__ == "__main__":
                test_yawn_timer_does_not_survive_face_loss,
                test_long_blinks_are_an_early_warning,
                test_no_nudge_before_anyone_has_been_seen,
+               test_escalation_to_critical_never_waits_for_the_cooldown,
                test_face_lost):
         fn()
     summary("drowsiness")

@@ -140,6 +140,7 @@ class DrowsinessMonitor:
         self._lost_since = None
         self._level_at_loss = Level.AWAKE
         self._last_alarm_t = 0.0
+        self._last_alarm_kind = ""       # 'drowsy' | 'critical' on that channel
         self._last_distract_alarm_t = 0.0
 
         self.blinks = 0
@@ -180,6 +181,23 @@ class DrowsinessMonitor:
 
         w = self.cnn_weight
         return w * cnn_score + (1 - w) * ear_score
+
+    def _alarm_due(self, kind: str, now: float) -> bool:
+        """
+        Cooldown for the drowsy/critical channel - with one exception.
+
+        ESCALATION NEVER WAITS. If the last alarm on this channel was the
+        DROWSY nudge and the driver has now gone CRITICAL, the siren goes
+        immediately. The old rule applied the cooldown blindly, so a
+        microsleep that began one second after a drowsy nudge got its WAKE
+        UP three seconds late - the three seconds that matter most.
+        """
+        escalating = kind == "critical" and self._last_alarm_kind != "critical"
+        if escalating or now - self._last_alarm_t >= self.cfg.alarm_cooldown_sec:
+            self._last_alarm_t = now
+            self._last_alarm_kind = kind
+            return True
+        return False
 
     def _prune(self, now: float):
         cut = now - self.cfg.perclos_window_sec
@@ -246,11 +264,9 @@ class DrowsinessMonitor:
                 # keep alarming until the driver is seen again.
                 level = self._level_at_loss
                 reasons = [f"FACE LOST while {LEVEL_TEXT[level]} ({gone:.0f}s)"]
-                if now - self._last_alarm_t >= self.cfg.alarm_cooldown_sec:
-                    should_alarm = True
-                    alarm_kind = ("critical" if level == Level.CRITICAL
-                                  else "drowsy")
-                    self._last_alarm_t = now
+                kind = "critical" if level == Level.CRITICAL else "drowsy"
+                if self._alarm_due(kind, now):
+                    should_alarm, alarm_kind = True, kind
             elif seen_before and gone >= self.cfg.face_lost_nudge_sec:
                 # Not drowsy, but the driver has been out of view for a while.
                 # A gentle nudge on the distraction channel, not a siren.
@@ -430,11 +446,9 @@ class DrowsinessMonitor:
         # safety system ends up switched off.
         should_alarm, alarm_kind = False, ""
         if level >= Level.DROWSY:
-            if now - self._last_alarm_t >= self.cfg.alarm_cooldown_sec:
-                should_alarm = True
-                alarm_kind = ("critical" if level == Level.CRITICAL
-                              else "drowsy")
-                self._last_alarm_t = now
+            kind = "critical" if level == Level.CRITICAL else "drowsy"
+            if self._alarm_due(kind, now):
+                should_alarm, alarm_kind = True, kind
         elif level == Level.DISTRACTED:
             if now - self._last_distract_alarm_t >= \
                     self.cfg.distract_alarm_cooldown_sec:
