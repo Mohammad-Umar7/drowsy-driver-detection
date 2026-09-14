@@ -380,10 +380,21 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        analysisExecutor.shutdown()
-        landmarker?.close()
-        classifier?.close()
-        alarm?.release()
+        // ORDER MATTERS. shutdown() only refuses NEW work; a frame already
+        // executing keeps running. Closing the landmarker and the ONNX session
+        // underneath that in-flight frame is a use-after-free in native code -
+        // a hard crash on the way out of the app, which users see as "it
+        // crashed when I closed it". Cancel, then WAIT for the frame to finish,
+        // and only then tear the native resources down.
+        analysisExecutor.shutdownNow()
+        try {
+            analysisExecutor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+        landmarker?.close(); landmarker = null
+        classifier?.close(); classifier = null
+        alarm?.release(); alarm = null
         rawMat.release(); uprightMat.release(); grayMat.release()
         lighting.release()
     }
