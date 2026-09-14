@@ -150,6 +150,43 @@ def test_muted_and_dead_thread():
     check("and played", wait_until(lambda: len(p.played) == 1))
 
 
+class StoppablePlayer:
+    """Holds for `hold` seconds unless stop() cuts it short, like a real device."""
+
+    def __init__(self, hold):
+        self.hold = hold
+        self.played = []            # how long each pattern actually ran
+        self.stops = 0
+        self._cut = threading.Event()
+
+    def __call__(self, wav):
+        self._cut.clear()
+        t0 = time.monotonic()
+        self._cut.wait(self.hold)
+        self.played.append(time.monotonic() - t0)
+
+    def stop(self):
+        self.stops += 1
+        self._cut.set()
+
+
+def test_critical_preempts_a_lesser_pattern():
+    print("\n[8] a CRITICAL siren cuts a drowsy nudge short; nothing else interrupts")
+    p = StoppablePlayer(hold=0.8)
+    a = Alarm(player=p, speaker=lambda s: None)
+    check("drowsy starts", a.fire("drowsy"))
+    time.sleep(0.1)
+    check("critical is accepted while the nudge plays", a.fire("critical"))
+    check("but a drowsy fire during the siren is dropped", not a.fire("drowsy"))
+    check("and a critical never interrupts a critical", not a.fire("critical"))
+    check("both patterns ran", wait_until(lambda: len(p.played) == 2, timeout=6.0)
+          and wait_until(lambda: not a.playing, timeout=6.0))
+    check("the nudge was cut short", p.played[0] < 0.5, f"ran {p.played[0]:.2f}s")
+    check("by exactly one stop()", p.stops == 1, f"{p.stops}")
+    check("the siren played in full", p.played[1] >= 0.75, f"ran {p.played[1]:.2f}s")
+    check("last played is the siren", a.last == ("critical", 0), f"{a.last}")
+
+
 def test_a_player_that_raises_is_survived():
     print("\n[7] audio errors never propagate, and the flag is always released")
     def bad(wav):
@@ -166,6 +203,7 @@ if __name__ == "__main__":
     print("=" * 60)
     for fn in (test_waveforms, test_siren_actually_sweeps, test_wav_container,
                test_escalation, test_never_blocks_and_never_overlaps,
-               test_muted_and_dead_thread, test_a_player_that_raises_is_survived):
+               test_muted_and_dead_thread, test_critical_preempts_a_lesser_pattern,
+               test_a_player_that_raises_is_survived):
         fn()
     summary("alarm")

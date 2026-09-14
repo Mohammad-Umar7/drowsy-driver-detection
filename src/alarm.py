@@ -165,8 +165,17 @@ def duration_sec(samples: np.ndarray) -> float:
 # platform back ends. Each play() BLOCKS for the sound's duration, which is
 # fine and even desirable: it runs on the alarm thread, never the video loop.
 # ---------------------------------------------------------------------------
-def _play_winsound(wav: bytes) -> None:
-    winsound.PlaySound(wav, winsound.SND_MEMORY)
+class _WinSound:
+    """winsound fallback. PlaySound(None) from any thread stops the current sound."""
+
+    def __call__(self, wav: bytes) -> None:
+        winsound.PlaySound(wav, winsound.SND_MEMORY)
+
+    def stop(self) -> None:
+        winsound.PlaySound(None, 0)
+
+
+_play_winsound = _WinSound()
 
 
 class _WaveOut:
@@ -241,6 +250,13 @@ class _WaveOut:
         finally:
             self._winmm.waveOutUnprepareHeader(self._h, ct.byref(hdr), size)
 
+    def stop(self) -> None:
+        """Abort whatever is playing; the header is marked done and __call__ returns."""
+        try:
+            self._winmm.waveOutReset(self._h)
+        except Exception:                # noqa: BLE001
+            pass
+
     def close(self) -> None:
         try:
             self._winmm.waveOutReset(self._h)
@@ -255,6 +271,7 @@ class _CommandPlayer:
     def __init__(self, argv):
         self.argv = argv
         self._files = {}
+        self._proc = None
 
     def __call__(self, wav: bytes) -> None:
         import hashlib
@@ -267,8 +284,22 @@ class _CommandPlayer:
             f.write(wav)
             f.close()
             path = self._files[key] = f.name
-        subprocess.run(self.argv + [path], timeout=30,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self._proc = subprocess.Popen(self.argv + [path], stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL)
+        try:
+            self._proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self._proc.kill()
+        finally:
+            self._proc = None
+
+    def stop(self) -> None:
+        p = self._proc
+        if p is not None:
+            try:
+                p.kill()
+            except Exception:            # noqa: BLE001
+                pass
 
 
 def _play_bell(wav: bytes) -> None:
@@ -380,10 +411,13 @@ class Alarm:
     """
     fire(kind) plays the pattern for `kind` on a background thread.
 
-    kind is 'distract' | 'drowsy' | 'critical'. A pattern already playing is
-    never interrupted and a fire() that arrives meanwhile is dropped - the
-    driver is already hearing it - but critical escalation is still counted,
-    so the NEXT burst is the bigger one.
+    kind is 'distract' | 'drowsy' | 'critical'. A fire() that arrives while a
+    pattern is playing is dropped - the driver is already hearing it - with
+    ONE exception: a CRITICAL siren cuts a lesser pattern short and starts at
+    once. The drowsy nudge and the microsleep it warns about are often a
+    second apart, and the siren must not queue behind two polite beeps.
+    Critical escalation is counted either way, so the NEXT burst is the
+    bigger one.
     """
 
     VOICE = {0: "Wake up!", 1: "Wake up! Pull over safely."}
@@ -397,6 +431,9 @@ class Alarm:
                        default_speaker(self._player, self.VOICE.values()))
         self._playing = False
         self._lock = threading.Lock()
+        self._thread = None
+        self._gen = 0                    # which play() owns the playing flag
+        self._current_kind = ""
         self._critical_level = 0
         self._last_critical_t = None
         self._wav_cache = {}
@@ -421,8 +458,18 @@ class Alarm:
             self._wav_cache[key] = to_wav(render(kind, level))
         return self._wav_cache[key]
 
-    def _play(self, kind: str, level: int) -> None:
+    def _play(self, kind: str, level: int, gen: int, preempt) -> None:
         try:
+            if preempt is not None:
+                # Cut the lesser pattern short, then wait for its thread so
+                # two sounds never overlap on the device.
+                stop = getattr(self._player, "stop", None)
+                if stop is not None:
+                    try:
+                        stop()
+                    except Exception:    # noqa: BLE001
+                        pass
+                preempt.join(timeout=2.0)
             self._player(self._wav(kind, level))
             if kind == "critical" and self.voice and self._speak is not None:
                 self._speak(self.VOICE[1 if level > 0 else 0])
@@ -430,7 +477,10 @@ class Alarm:
             pass                         # audio must never crash the detector
         finally:
             with self._lock:
-                self._playing = False
+                # Only the newest play() owns the flag: a pre-empted thread
+                # finishing late must not clear it under the siren.
+                if self._gen == gen:
+                    self._playing = False
 
     def fire(self, kind: str = "drowsy", critical: bool = False,
              now: float = None) -> bool:
@@ -445,20 +495,29 @@ class Alarm:
         if kind == "critical":
             level = self._escalate(time.monotonic() if now is None else now)
         with self._lock:
+            preempt = None
             if self._playing:
-                return False
+                if not (kind == "critical" and self._current_kind != "critical"):
+                    return False
+                preempt = self._thread
+            self._gen += 1
+            gen = self._gen
             self._playing = True
+            self._current_kind = kind
+            t = threading.Thread(target=self._play, args=(kind, level, gen, preempt),
+                                 daemon=True)
+            self._thread = t
         self.last = (kind, level)
         try:
-            threading.Thread(target=self._play, args=(kind, level),
-                             daemon=True).start()
+            t.start()
         except RuntimeError:
             # "can't start new thread" under resource pressure. _play never
             # runs, so its finally never clears _playing, and every later
             # fire() would return early - a silently dead alarm for the rest
             # of the session. Reset the flag so the next attempt can try again.
             with self._lock:
-                self._playing = False
+                if self._gen == gen:
+                    self._playing = False
             return False
         return True
 
