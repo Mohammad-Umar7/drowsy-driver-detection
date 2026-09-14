@@ -74,7 +74,16 @@ class Alarm:
                 return
             self._playing = True
         pattern = self.PATTERNS.get(kind, self.PATTERNS["drowsy"])
-        threading.Thread(target=self._play, args=(pattern,), daemon=True).start()
+        try:
+            threading.Thread(target=self._play, args=(pattern,),
+                             daemon=True).start()
+        except RuntimeError:
+            # "can't start new thread" under resource pressure. _play never
+            # runs, so its finally never clears _playing, and every later
+            # fire() would return early - a silently dead alarm for the rest
+            # of the session. Reset the flag so the next attempt can try again.
+            with self._lock:
+                self._playing = False
 
     def toggle(self) -> bool:
         self.enabled = not self.enabled
