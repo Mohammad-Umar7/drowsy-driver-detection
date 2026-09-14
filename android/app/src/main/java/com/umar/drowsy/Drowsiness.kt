@@ -190,6 +190,7 @@ class DrowsinessMonitor(
             // Genuinely gone. Freeze the closure timer AND the mouth/head
             // timers: a yawn or nod that began before the dropout must not be
             // "completed" the instant the face returns.
+            val seenBefore = lastFaceT != null
             if (lostSince == null) {
                 lostSince = lastFaceT ?: now
                 levelAtLoss = state.level
@@ -214,8 +215,12 @@ class DrowsinessMonitor(
                     alarmKind = if (level == Level.CRITICAL) "critical" else "drowsy"
                     lastAlarmT = now
                 }
-            } else if (gone >= Cfg.FACE_LOST_NUDGE_SEC) {
+            } else if (seenBefore && gone >= Cfg.FACE_LOST_NUDGE_SEC) {
                 // Not drowsy, but out of view for a while: a gentle nudge.
+                // Only once a driver has actually been seen - the app has
+                // just been opened and the phone is still going into its
+                // mount, and beeping at an empty seat every 9 s is exactly
+                // the nagging that gets the whole thing switched off.
                 level = Level.DISTRACTED
                 reasons = listOf("driver not visible (%.0fs)".format(gone))
                 if (now - lastDistractAlarmT >= Cfg.DISTRACT_ALARM_COOLDOWN_SEC) {
