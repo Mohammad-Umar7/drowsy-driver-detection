@@ -93,52 +93,74 @@ object Geometry {
     fun eyeWidth(pts: Array<FloatArray>, idx: IntArray): Double =
         dist(pts[idx[0]], pts[idx[3]])
 
+    // Everything solvePnP needs, allocated ONCE. The previous version created
+    // and released nine Mats per frame - the 3D model, the camera matrix and
+    // the distortion vector among them, none of which ever change.
+    private val modelPts = MatOfPoint3f(*MODEL_POINTS_3D.toTypedArray())
+    private val imagePts = MatOfPoint2f()
+    private val camMat = Mat(3, 3, CvType.CV_64FC1)
+    private val distCoeffs = MatOfDouble(0.0, 0.0, 0.0, 0.0)
+    private val rvec = Mat()
+    private val tvec = Mat()
+    private val rot = Mat()
+    private val mtxR = Mat()
+    private val mtxQ = Mat()
+
+    // Last frame's solution, used to seed the next solve. One driver, so
+    // one slot - the same design as _POSE_PREV in geometry.py.
+    private val prevRvec = Mat()
+    private val prevTvec = Mat()
+    private var haveSeed = false
+
+    /** Forget the previous pose, e.g. after the face has been lost. */
+    fun resetPoseSeed() { haveSeed = false }
+
     /**
      * Head orientation via PnP. We know 6 points in 3D and where they landed
      * in 2D; solvePnP recovers the rotation that explains that projection.
+     *
+     * The iterative solver is SEEDED with the previous frame's answer, as the
+     * desktop version is. The head moves only a little between consecutive
+     * frames, so last frame's pose is an excellent starting point: the solver
+     * converges in fewer iterations and, more importantly, cannot flip to the
+     * mirror-image solution that is also a valid local minimum. Unseeded,
+     * pitch and yaw occasionally jumped by tens of degrees for a single frame
+     * - enough to fake the start of a head nod.
      *
      * Returns (pitch, yaw, roll) in degrees.
      *   pitch < 0 -> tipping down (nodding off)
      *   yaw   != 0 -> looking left/right
      */
     fun headPose(pts: Array<FloatArray>, w: Int, h: Int): DoubleArray {
-        val image = MatOfPoint2f(*POSE_LANDMARKS.map {
-            Point(pts[it][0].toDouble(), pts[it][1].toDouble())
-        }.toTypedArray())
-        val model = MatOfPoint3f(*MODEL_POINTS_3D.toTypedArray())
+        imagePts.fromArray(*Array(POSE_LANDMARKS.size) {
+            val p = pts[POSE_LANDMARKS[it]]
+            Point(p[0].toDouble(), p[1].toDouble())
+        })
 
         // Approximate intrinsics: a camera's focal length in pixels is roughly
         // the image width. Good enough because only angles are wanted.
         val focal = w.toDouble()
-        val cam = Mat(3, 3, CvType.CV_64FC1)
-        cam.put(0, 0, focal, 0.0, w / 2.0, 0.0, focal, h / 2.0, 0.0, 0.0, 1.0)
-        val dist = MatOfDouble(0.0, 0.0, 0.0, 0.0)
+        camMat.put(0, 0, focal, 0.0, w / 2.0, 0.0, focal, h / 2.0, 0.0, 0.0, 1.0)
 
-        val rvec = Mat()
-        val tvec = Mat()
+        if (haveSeed) { prevRvec.copyTo(rvec); prevTvec.copyTo(tvec) }
         val ok = try {
-            Calib3d.solvePnP(model, image, cam, dist, rvec, tvec, false,
-                Calib3d.SOLVEPNP_ITERATIVE)
+            Calib3d.solvePnP(modelPts, imagePts, camMat, distCoeffs, rvec, tvec,
+                haveSeed, Calib3d.SOLVEPNP_ITERATIVE)
         } catch (e: Exception) {
             false
         }
         if (!ok) {
-            listOf(image, model, cam, dist, rvec, tvec).forEach { it.release() }
+            haveSeed = false
             return doubleArrayOf(0.0, 0.0, 0.0)
         }
+        rvec.copyTo(prevRvec); tvec.copyTo(prevTvec); haveSeed = true
 
-        val rot = Mat()
         Calib3d.Rodrigues(rvec, rot)
         // OpenCV's Java binding returns the Euler angles as a plain double[]
         // (degrees, x/y/z) -- not a Scalar. mtxR and mtxQ are required output
         // arguments even though we only want the angles.
-        val mtxR = Mat()
-        val mtxQ = Mat()
         val angles = Calib3d.RQDecomp3x3(rot, mtxR, mtxQ)
-        val out = doubleArrayOf(wrap(angles[0]), wrap(angles[1]), wrap(angles[2]))
-        listOf(image, model, cam, dist, rvec, tvec, rot, mtxR, mtxQ)
-            .forEach { it.release() }
-        return out
+        return doubleArrayOf(wrap(angles[0]), wrap(angles[1]), wrap(angles[2]))
     }
 
     /**

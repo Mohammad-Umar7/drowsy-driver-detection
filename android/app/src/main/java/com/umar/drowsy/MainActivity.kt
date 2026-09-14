@@ -115,6 +115,7 @@ class MainActivity : AppCompatActivity() {
             // scene: the eased gamma and the rolling FPS window both describe
             // the OLD one and would be wrong for the first second of the new.
             lighting.reset()
+            Geometry.resetPoseSeed()
             frameTimes.clear()
             lastFrameT = 0.0
             startCamera()
@@ -259,6 +260,10 @@ class MainActivity : AppCompatActivity() {
             )
             val faces = result?.faceLandmarks()
             val found = !faces.isNullOrEmpty()
+            // The next face to appear may be a different person or a very
+            // different pose; seeding the pose solver from a stale answer
+            // would start it in the wrong basin.
+            if (!found) Geometry.resetPoseSeed()
 
             var ear = 0.3; var mar = 0.0
             var pitch = 0.0; var yaw = 0.0
