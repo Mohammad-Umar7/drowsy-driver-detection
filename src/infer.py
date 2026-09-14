@@ -148,7 +148,10 @@ def draw_hud(frame, st, obs, fps, ear_thr, model_on, alarm_on, debug,
                     1, cv2.LINE_AA)
         y += 21
 
-    cv2.putText(frame, f"blinks {st.blinks} ({st.blink_rate:.0f}/min)   "
+    # Long blinks get their own count: they are the early-warning signal, and
+    # a driver watching that number climb learns something useful.
+    cv2.putText(frame, f"blinks {st.blinks}   long {st.long_blinks} "
+                       f"({st.long_blink_rate:.0f}/min)   "
                        f"yawns {st.yawns} ({st.yawn_rate:.0f}/min)",
                 (12, y), FONT, 0.46, (215, 215, 215), 1, cv2.LINE_AA)
 
