@@ -145,11 +145,13 @@ python -m src.train
 # 4. evaluate on subjects the model has never seen
 python -m src.evaluate
 
-# 5. verify the temporal logic (no webcam needed)
-python -m tests.test_drowsiness
+# 5. run the test suites - temporal logic, video source, lighting, display.
+#    No webcam needed. (Or one at a time: python -m tests.test_drowsiness)
+python -m pytest tests/
 
-# 6. verify the Kotlin port has not drifted from the Python
+# 6. verify the Kotlin port: constants mechanically, logic with its own JVM suite
 python scripts/check_port_parity.py
+cd android && ./gradlew testDebugUnitTest
 ```
 
 ---
@@ -244,6 +246,14 @@ verdict is identical at 10, 30 and 60 FPS:
 Every duration in the tests is read from `config.py` rather than hard-coded, so
 retuning a threshold cannot silently invalidate the test that guards it.
 
+Three further suites need no camera either: the video source (a file ends
+cleanly and plays at its own frame rate, rotation and mirroring, a dead stream
+does not block, a raising backend recovers), the lighting stage (the five
+regimes, the comfort band, the eased gamma), and the display (every state
+rendered at three frame sizes into memory). The Kotlin port has its own
+22-test JVM suite of the same drowsiness scenarios, because a parity check on
+constants cannot see a branch that drifted.
+
 ### Robustness to lighting
 
 `python scripts/test_lighting.py` takes one clean reference frame of your face
@@ -336,7 +346,12 @@ scripts/
   export_onnx.py   PyTorch -> ONNX for the phone, with parity verification
   check_port_parity.py  guards the Kotlin port against silent drift
 tests/
-  test_drowsiness.py   70 simulated-time tests, no webcam required
+  test_drowsiness.py   70 simulated-time checks of the state machine, no webcam required
+  test_source.py       files end cleanly, pacing, rotation, dead and flaky streams
+  test_lighting.py     the five regimes, gamma maths, comfort band, smoothing
+  test_hud.py          every display state at three sizes, rendered into memory
+android/app/src/test/
+  DrowsinessMonitorTest.kt   22 JVM tests of the Kotlin state machine
 docs/
   01-foundations.md       images, pixels, landmarks, EAR — assumes zero background
   02-cnn-explained.md     what a CNN and a kernel are, worked with real numbers

@@ -194,6 +194,16 @@ term in the lighting classifier, and a stale threshold default. The lighting
 stage's own constants are now named on both sides (`LightCfg` in Kotlin) and
 checked too — 52 values in all.
 
+Constants are the mechanical half. The logic half has its own suite:
+`app/src/test/.../DrowsinessMonitorTest.kt` runs 22 of the desktop scenarios
+against the Kotlin state machine on the plain JVM — no device, no emulator —
+because `Drowsiness.kt` has no Android dependency:
+
+```bash
+cd android
+./gradlew testDebugUnitTest
+```
+
 ---
 
 ## Frame handling

@@ -56,11 +56,9 @@ LIGHT_CONSTS = [
     "DARK_MIN_CONTRAST", "DIM_MEAN", "BRIGHT_MEAN", "BRIGHT_CLIP_FRAC",
 ]
 
-# Desktop-only settings with no phone equivalent, and why.
-SKIP = {
-    # The phone has no saved calibration file yet, so the ratio is used but
-    # the grace period for a lost face is handled by CameraX lifecycle.
-}
+# Desktop-only DrowsyCfg fields with no phone equivalent. Empty today: every
+# threshold the desktop uses, the phone uses too.
+SKIP = set()
 
 
 def parse_kotlin_consts(path: Path) -> dict:
