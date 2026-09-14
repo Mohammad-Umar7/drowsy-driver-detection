@@ -61,7 +61,12 @@ class Alarm(context: Context) {
     fun fire(kind: String) {
         if (!enabled || playing) return
         playing = true
-        handler.post {
+        // post() returns false if the alarm thread's looper has quit - for
+        // example during teardown. In that case the block below never runs,
+        // its finally never clears `playing`, and every future fire() would
+        // return early: the alarm would be silently dead for the rest of the
+        // process. Reset the flag ourselves if the post is refused.
+        val posted = handler.post {
             try {
                 for ((t, ms) in patternFor(kind)) {
                     tone?.startTone(t, ms)
@@ -79,6 +84,7 @@ class Alarm(context: Context) {
                 playing = false
             }
         }
+        if (!posted) playing = false
     }
 
     private fun vibrate(pattern: LongArray) {
