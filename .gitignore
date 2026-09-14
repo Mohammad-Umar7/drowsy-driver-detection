@@ -3,6 +3,8 @@ data/raw/
 data/processed/
 checkpoints/*.pt
 checkpoints/*.pth
+# one person's eye calibration - never ship it to the next person
+checkpoints/user_calibration.json
 assets/*.mp4
 assets/*.gif
 

@@ -88,19 +88,28 @@ def load_model(device):
 
 
 def load_calibration():
-    p = Path(CFG.paths.calibration)
-    if p.exists():
-        import json
-        d = json.loads(p.read_text())
-        if "ear_thresh" in d:
-            print(f"[ok] using calibrated EAR threshold {d['ear_thresh']:.3f}")
-            return float(d["ear_thresh"]), True
+    """
+    This person's saved EAR threshold, or the default if they have none.
+
+    Read from the git-ignored user file. The tracked calibration.json is
+    checked too, but only for an `ear_thresh` left there by older versions,
+    which wrote personal calibration into the model's file.
+    """
+    import json
+    for p in (Path(CFG.paths.user_calibration), Path(CFG.paths.calibration)):
+        if p.exists():
+            d = json.loads(p.read_text())
+            if "ear_thresh" in d:
+                print(f"[ok] using calibrated EAR threshold "
+                      f"{d['ear_thresh']:.3f}  ({p.name})")
+                return float(d["ear_thresh"]), True
     return CFG.drowsy.ear_thresh, False
 
 
 def save_calibration(**kw):
+    """Persist per-person values in the user file, never the tracked one."""
     import json
-    p = Path(CFG.paths.calibration)
+    p = Path(CFG.paths.user_calibration)
     d = json.loads(p.read_text()) if p.exists() else {}
     d.update(kw)
     p.parent.mkdir(parents=True, exist_ok=True)

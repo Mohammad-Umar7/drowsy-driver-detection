@@ -20,7 +20,18 @@ class Paths:
     checkpoints: Path = ROOT / "checkpoints"
     reports: Path = ROOT / "reports"
     best_model: Path = ROOT / "checkpoints" / "eyenet_best.pt"
+    # Two calibration files, deliberately.
+    #   calibration.json       properties of the MODEL (the CNN threshold that
+    #                          evaluate.py validated). Tracked in git, because
+    #                          a fresh clone should get the validated value.
+    #   user_calibration.json  properties of ONE PERSON'S EYES (their EAR
+    #                          threshold). Git-ignored, because the previous
+    #                          version wrote it into the tracked file, so every
+    #                          run dirtied the working tree and a committed
+    #                          calibration shipped the developer's personal
+    #                          threshold to everyone who cloned the repo.
     calibration: Path = ROOT / "checkpoints" / "calibration.json"
+    user_calibration: Path = ROOT / "checkpoints" / "user_calibration.json"
 
 
 @dataclass
