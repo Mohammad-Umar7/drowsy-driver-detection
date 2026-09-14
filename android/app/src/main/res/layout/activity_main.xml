@@ -28,33 +28,39 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Four equal-width tonal buttons across the bottom. The overlay leaves
+         this strip clear, so the buttons never sit on top of a metric. -->
     <LinearLayout
-        android:layout_width="wrap_content"
+        android:id="@+id/buttons"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:padding="12dp"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingBottom="12dp"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnCalibrate"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
-            android:text="Calibrate" />
+            style="@style/Widget.Drowsy.Button"
+            android:text="@string/btn_calibrate" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSwitch"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
-            android:text="Flip" />
+            style="@style/Widget.Drowsy.Button"
+            android:text="@string/btn_flip" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btnAlarm"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Mute" />
+            style="@style/Widget.Drowsy.Button"
+            android:text="@string/btn_mute" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnReset"
+            style="@style/Widget.Drowsy.Button"
+            android:text="@string/btn_reset" />
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

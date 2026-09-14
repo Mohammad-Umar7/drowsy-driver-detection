@@ -106,7 +106,14 @@ class MainActivity : AppCompatActivity() {
 
         ui.btnCalibrate.setOnClickListener {
             calibrator.start()
-            Toast.makeText(this, "Keep your eyes OPEN", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, R.string.toast_calibrating, Toast.LENGTH_SHORT).show()
+        }
+        ui.btnReset.setOnClickListener {
+            // The monitor is owned by the analysis thread, so the reset runs
+            // there too rather than racing an in-flight update().
+            analysisExecutor.execute { monitor.reset() }
+            ui.overlay.clearHistory()
+            Toast.makeText(this, R.string.toast_reset, Toast.LENGTH_SHORT).show()
         }
         ui.btnSwitch.setOnClickListener {
             lensFacing = if (lensFacing == CameraSelector.LENS_FACING_FRONT)
@@ -122,7 +129,7 @@ class MainActivity : AppCompatActivity() {
         }
         ui.btnAlarm.setOnClickListener {
             val on = alarm?.toggle() ?: false
-            ui.btnAlarm.text = if (on) "Mute" else "Unmute"
+            ui.btnAlarm.setText(if (on) R.string.btn_mute else R.string.btn_unmute)
         }
 
         // Reuse a saved calibration if one exists; otherwise measure this
@@ -363,13 +370,21 @@ class MainActivity : AppCompatActivity() {
             val fps = if (frameTimes.isEmpty()) 0.0
                       else 1.0 / max(1e-6, frameTimes.average())
 
-            val eL = useL; val eR = useR
-            val bx = boxes.toList()
-            ui.overlay.post {
-                ui.overlay.update(st, ear, mar, pitch, yaw, earThresh,
-                    wMax, wMin, eL, eR, fps, bx,
-                    calibrator.armed, calibrator.remaining(now))
-            }
+            // One immutable snapshot per frame for the overlay. Built here on
+            // the analysis thread, consumed on the UI thread; nothing mutable
+            // is shared between the two.
+            val frame = HudFrame(
+                state = st, faceFound = found, ear = ear, mar = mar,
+                pitch = pitch, yaw = yaw, earThresh = earThresh,
+                widthMax = wMax, widthMin = wMin, useL = useL, useR = useR,
+                fps = fps, boxes = boxes.toList(),
+                calibrating = calibrator.armed,
+                calibRemaining = calibrator.remaining(now),
+                light = lighting.stats, lightingOn = lighting.enabled,
+                alarmOn = alarm?.enabled ?: false, modelOn = classifier != null,
+                now = now
+            )
+            ui.overlay.post { ui.overlay.update(frame) }
         } catch (e: Exception) {
             Log.e(TAG, "frame failed", e)
         } finally {
