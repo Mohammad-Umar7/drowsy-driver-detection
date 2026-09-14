@@ -37,6 +37,7 @@ Also handled here: PHONE ROTATION. A phone clamped to a windscreen mount is
 usually sideways, and the stream arrives rotated. MediaPipe needs an upright
 face, so we rotate frames before anything else sees them.
 """
+import sys
 import threading
 import time
 from typing import Optional, Tuple, Union
@@ -130,10 +131,15 @@ class VideoSource:
             self._cap = cv2.VideoCapture(self.spec, cv2.CAP_FFMPEG)
         elif self.is_file:
             self._cap = cv2.VideoCapture(self.spec)
-        else:
+        elif sys.platform == "win32":
             # DSHOW opens a Windows webcam almost instantly; the default MSMF
             # backend can take several seconds.
             self._cap = cv2.VideoCapture(self.spec, cv2.CAP_DSHOW)
+        else:
+            # DirectShow is a Windows API. Asking for it on macOS or Linux
+            # does not fall back to anything - OpenCV simply fails to open the
+            # device - so the app could never see a camera off Windows.
+            self._cap = cv2.VideoCapture(self.spec)
 
         if not self._cap.isOpened():
             return False
