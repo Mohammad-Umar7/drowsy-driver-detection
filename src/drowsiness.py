@@ -224,9 +224,9 @@ class DrowsinessMonitor:
             # Genuinely gone. Freeze the closure timer and the mouth/head
             # timers: a yawn or nod that began before the dropout must not be
             # "completed" the instant the face returns.
+            seen_before = self._last_face_t is not None
             if self._lost_since is None:
-                self._lost_since = (self._last_face_t
-                                    if self._last_face_t is not None else now)
+                self._lost_since = self._last_face_t if seen_before else now
                 self._level_at_loss = self.state.level
             gone = now - self._lost_since
             self._closed_since = None
@@ -251,9 +251,15 @@ class DrowsinessMonitor:
                     alarm_kind = ("critical" if level == Level.CRITICAL
                                   else "drowsy")
                     self._last_alarm_t = now
-            elif gone >= self.cfg.face_lost_nudge_sec:
+            elif seen_before and gone >= self.cfg.face_lost_nudge_sec:
                 # Not drowsy, but the driver has been out of view for a while.
                 # A gentle nudge on the distraction channel, not a siren.
+                #
+                # Only once a driver has actually been seen. Before that there
+                # is nobody to nudge: the app has just been opened and the
+                # phone is still being clipped into its mount, and beeping
+                # "look at the road" at an empty seat every 9 s is exactly the
+                # kind of nagging that gets the whole thing switched off.
                 level = Level.DISTRACTED
                 reasons = [f"driver not visible ({gone:.0f}s)"]
                 if now - self._last_distract_alarm_t >= \

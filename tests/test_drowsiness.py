@@ -431,6 +431,31 @@ def test_long_blinks_are_an_early_warning():
     print(f"        -> {st.reasons}")
 
 
+def test_no_nudge_before_anyone_has_been_seen():
+    print("\n[23] an empty seat at startup must not be nagged to look at the road")
+    m = DrowsinessMonitor()
+    fired = 0
+    st = None
+    # The app has just been opened; nobody has sat down yet.
+    for i in range(int((D.face_lost_nudge_sec * 3) * FPS)):
+        st = m.update(face_found=False, now=1000.0 + i * DT)
+        fired += st.should_alarm
+    check("reports NO_FACE, not DISTRACTED", st.level == Level.NO_FACE,
+          f"got {st.level.name}")
+    check("never alarmed", fired == 0, f"fired {fired} times")
+
+    # Once a driver HAS been seen, vanishing for a while does earn the nudge.
+    t = 1000.0 + D.face_lost_nudge_sec * 3
+    _, t = run(m, 2.0, t, ear=EAR_OPEN)
+    fired = 0
+    for i in range(int((D.face_lost_nudge_sec + 2.0) * FPS)):
+        st = m.update(face_found=False, now=t + i * DT)
+        fired += st.should_alarm
+    check("nudges after the driver has been seen and then left",
+          fired >= 1 and st.level == Level.DISTRACTED,
+          f"fired {fired}, level {st.level.name}")
+
+
 def test_face_lost():
     print("\n[11] face disappears -> NO_FACE after the grace period")
     m = DrowsinessMonitor()
@@ -461,6 +486,7 @@ if __name__ == "__main__":
                test_awake_driver_out_of_view_gets_a_nudge_not_a_siren,
                test_yawn_timer_does_not_survive_face_loss,
                test_long_blinks_are_an_early_warning,
+               test_no_nudge_before_anyone_has_been_seen,
                test_face_lost):
         fn()
     print("\n" + "=" * 60)
